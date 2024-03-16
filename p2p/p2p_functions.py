@@ -282,5 +282,5 @@ def center_crop(im):
 
 
 def load_im_into_format_from_path(im_path):
-    return center_crop(Image.open(im_path)).resize((512, 512))
+    return center_crop(Image.open(im_path)).resize((512, 512)).convert('RGB')
 
