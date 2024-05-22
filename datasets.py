@@ -63,7 +63,7 @@ class ChestXRay(Dataset):
     def __create_images_data(self):
         images_list = []
         for image_dir in self.image_dirs:
-            cur_images_root = os.path.join(self.data_root, image_dir, "specific_images")
+            cur_images_root = os.path.join(self.data_root, image_dir, "images")
             cur_images = sorted(os.listdir(cur_images_root))
             images_list.extend([os.path.join(cur_images_root, im) for im in cur_images])
         return images_list
