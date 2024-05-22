@@ -1,11 +1,9 @@
 import os
-from glob import glob
 from typing import List
 import numpy as np
 import torch
 from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
 from matplotlib import pyplot as plt
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from inversion import MyInvertFixedPoint
 from torch.distributions import Normal
 import logging
@@ -13,26 +11,28 @@ from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, Folder
 from dataclasses import dataclass
 import shutil
 
+from utils import latent_to_bpd
 
-def run_coco(save_dir=None, num_ddim_step=50):
+
+def run_coco(save_dir=None, num_ddim_step=50, null_text=False):
     coco_ds = CocoCaptions17()
     if save_dir is None:
         save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results", "coco_inverse_latents")
-    run(coco_ds, save_dir, num_ddim_step=num_ddim_step)
+    run(coco_ds, save_dir, dataset_indices=(0, 50), num_ddim_step=num_ddim_step, null_text=null_text)
 
 
-def run_chest_x_ray(save_dir=None, num_ddim_step=50):
+def run_chest_x_ray(save_dir=None, num_ddim_step=50, null_text=False):
     chest_x_ray_dataset = ChestXRay()
     if save_dir is None:
         save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results", "chest_x_rays")
-    run(chest_x_ray_dataset, save_dir, dataset_indices=(0, 50), num_ddim_step=num_ddim_step)
+    run(chest_x_ray_dataset, save_dir, dataset_indices=(0, 50), num_ddim_step=num_ddim_step, null_text=null_text)
 
 
-def run_normal_distributed_images(save_dir=None, num_ddim_step=50):
+def run_normal_distributed_images(save_dir=None, num_ddim_step=50, null_text=False):
     normal_dataset = NormalDistributedDataset()
     if save_dir is None:
         save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results", "random_normal")
-    run(normal_dataset, save_dir, save_images=True, dataset_indices=(0, 50), num_ddim_step=num_ddim_step)
+    run(normal_dataset, save_dir, save_images=True, dataset_indices=(0, 50), num_ddim_step=num_ddim_step, null_text=null_text)
 
 
 def examine_specific_images(images_dir, caption, save_dir):
@@ -42,7 +42,7 @@ def examine_specific_images(images_dir, caption, save_dir):
 
 
 @torch.no_grad()
-def run(dataset, save_dir, save_images=False, dataset_indices=None, num_ddim_step=50):
+def run(dataset, save_dir, save_images=False, dataset_indices=None, num_ddim_step=50, null_text=False):
     if dataset_indices is None:
         dataset_indices = (0, len(dataset))
     logging.info(f"Saving results to {save_dir}")
@@ -66,6 +66,8 @@ def run(dataset, save_dir, save_images=False, dataset_indices=None, num_ddim_ste
 
     for i in range(*dataset_indices):
         image, caption = dataset[i]
+        if null_text:
+            caption = ""
         if len(image.getbands()) < 3:
             logging.info(f"Skipping image {i} as it is not rgb")
             continue
@@ -81,14 +83,17 @@ def run(dataset, save_dir, save_images=False, dataset_indices=None, num_ddim_ste
         # (see https://github.com/huggingface/diffusers/blob/v0.26.3/src/diffusers/pipelines/latent_diffusion/pipeline_latent_diffusion.py#L166)
         log_likelihood = standard_normal.log_prob(latent).sum()
         output = {"log_likelihood": log_likelihood.item(),
+                  "bpd": latent_to_bpd(latent),
                   "latent": latent,
                   "prompt": caption,
                   "NUM_DDIM_STEPS": num_ddim_step,
                   "GUIDANCE_SCALE": GUIDANCE_SCALE,
+                  "Null text": null_text,
                   }
         if save_images:
             output['image'] = image
-        logging.info(f"finished image {i + 1}/{len(dataset)}")
+        n_images = dataset_indices[1] - dataset_indices[0]
+        logging.info(f"finished image {i + 1}/{n_images}")
         torch.save(output, os.path.join(save_dir, f"sample_{i}.pt"))
 
 
@@ -106,20 +111,21 @@ class HistogramData:
     name: str
 
 
-def plot_likelihoods_histograms(data_arr: List[HistogramData], n_samples_per_data=50, save_path=None):
+def plot_likelihoods_histograms(data_arr: List[HistogramData], n_samples_per_data=50, save_path=None,
+                                plot_key='log_likelihood'):
     plot_data = {}
     for hist_data in data_arr:
         files = os.listdir(hist_data.directory)
-        likelihoods = [torch.load(os.path.join(hist_data.directory, f))["log_likelihood"] for f in files][
+        likelihoods = [torch.load(os.path.join(hist_data.directory, f))[plot_key] for f in files][
                       :n_samples_per_data]
         assert len(likelihoods) == n_samples_per_data,\
             f"Required n_samples_per_data samples ( = {n_samples_per_data}, but got only {len(likelihoods)}"
         plot_data[hist_data.name] = np.asarray(likelihoods)
+    plt.clf()
     plt.hist(list(plot_data.values()), label=list(plot_data.keys()))
     plt.legend()
-    plt.xlabel("NLL")
+    plt.xlabel(plot_key.upper())
     plt.ylabel("Count")
-    plt.title(f"Histogram (over {n_samples_per_data}) NLL of latents inversed from different images")
     if save_path:
         plt.savefig(save_path)
     plt.show()
@@ -137,18 +143,25 @@ def plot_specific_images_likelihoods(results_dir):
         plt.savefig(os.path.join(results_dir, "images", f"sample_{idx}.png"))
 
 
+def add_bpd_to_results(results_dir):
+    samples = [os.path.join(results_dir, f) for f in os.listdir(results_dir)]
+    samples = [(f, torch.load(f)) for f in samples]
+    for _, sample in samples:
+        sample['bpd'] = latent_to_bpd(sample['latent'])
+    for path, sample in samples:
+        torch.save(sample, path)
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    base_dir = "/home/shimon/research/diffusion_inversions/FPI/results"
-    for ddim_step in [1] + list(range(5, 51, 5)):
-        cur_base_dir = f"{base_dir}/num_ddim_steps_{ddim_step}"
-        run_coco(save_dir=f"{cur_base_dir}/coco", num_ddim_step=ddim_step)
-        run_chest_x_ray(save_dir=f"{cur_base_dir}/chest_x_ray", num_ddim_step=ddim_step)
-        run_normal_distributed_images(save_dir=f"{cur_base_dir}/random_normal", num_ddim_step=ddim_step)
-
-    # coco_data_hist = HistogramData(directory=f"{base_dir}/coco_inverse_latents", name="MS-COCO")
-    # chest_data_hist = HistogramData(directory=f"{base_dir}/chest_x_rays", name="ChestXRay")
-    # random_data_hist = HistogramData(directory=f"{base_dir}/random_normal", name="Random noise")
-    # data_hists = [coco_data_hist, chest_data_hist, random_data_hist]
-    # plot_likelihoods_histograms(data_hists, save_path=f"{base_dir}/likelihoods_histograms.png")
-
+    base_dir = "/home/shimon/research/diffusion_inversions/FPI/results/null_text"
+    os.makedirs(base_dir, exist_ok=True)
+    ddim_steps = 10
+    run_coco(save_dir=f'{base_dir}/coco', num_ddim_step=ddim_steps, null_text=True)
+    run_chest_x_ray(save_dir=f'{base_dir}/chest_x_ray', num_ddim_step=ddim_steps, null_text=True)
+    run_normal_distributed_images(save_dir=f'{base_dir}/random_normal', num_ddim_step=ddim_steps, null_text=True)
+    dirs = [base_dir + "/" + f for f in ["chest_x_ray", "coco", "random_normal"]]
+    hists = []
+    for d in dirs:
+        hists.append(HistogramData(directory=d, name=d.split("/")[-1]))
+    plot_likelihoods_histograms(hists, save_path=f"{base_dir}/bpd_histograms.png", plot_key='bpd')
