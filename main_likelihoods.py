@@ -1,7 +1,10 @@
 import os
+import re
+from glob import glob
 from typing import List
 import numpy as np
 import torch
+from PIL import Image
 from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
 from matplotlib import pyplot as plt
 from inversion import MyInvertFixedPoint
@@ -11,7 +14,8 @@ from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, Folder
 from dataclasses import dataclass
 import shutil
 
-from utils import latent_to_bpd
+from p2p.ptp_utils import plot_images
+from utils import latent_to_bpd, latent_to_image
 
 
 def run_coco(save_dir=None, num_ddim_step=50, null_text=False):
@@ -152,16 +156,63 @@ def add_bpd_to_results(results_dir):
         torch.save(sample, path)
 
 
+def save_latents_images(exp_dir, num_images, num_ddim_steps=10, save_path="results_partial_inverse/coco/images",
+                        dataset='COCO'):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    model_id = "CompVis/stable-diffusion-v1-4"
+    pipe = MyInvertFixedPoint.from_pretrained(
+        model_id,
+        scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
+        safety_checker=None,
+    ).to('cuda')
+    dataset = dataset.lower()
+    if dataset == 'coco':
+        ds = CocoCaptions17()
+    elif dataset == 'chest_x_ray':
+        ds = ChestXRay()
+    elif dataset == 'random_normal':
+        ds = NormalDistributedDataset()
+    else:
+        raise ValueError(f"Dataset {dataset} is not supported")
+    for i in range(num_images):
+        latent = torch.load(f"{exp_dir}/sample_{i}.pt")['latent']
+        image_original_latent = latent_to_image(latent, num_ddim_steps, pipe=pipe,
+                                                save_path=f"{save_path}/latent_{i}.png")
+        image_original = ds[i][0]
+        image_original.save(f"{save_path}/original_image_{i}.png")
+        plot_images([image_original_latent, image_original], num_rows=1, num_cols=2,
+                    titles=["Inverted Image", "Original Image"],
+                    save_fig_path=f"{save_path}/compare_{i}", show_fig=False)
+
+
+def get_first_n_images_in_directory(n, glob_pattern):
+    sort_key = lambda x: int(re.match(r".*_(\d+)\.png", x).group(1))
+    all_images = sorted(glob(glob_pattern), key=sort_key)
+    return [Image.open(im) for im in all_images[:n]]
+
+
+def create_comparison_image_grid(base_dir, num_samples_per_ds=5):
+    images_dict = {}
+    for ds in ['coco', 'chest_x_ray', 'random_normal']:
+        latent_images = get_first_n_images_in_directory(num_samples_per_ds, f"{base_dir}/{ds}/images/latent_*.png")
+        original_images = get_first_n_images_in_directory(num_samples_per_ds,
+                                                          f"{base_dir}/{ds}/images/original_image_*.png")
+        images_dict[ds] = list(zip(latent_images, original_images))
+
+    fig, axes = plt.subplots(num_samples_per_ds, 6, figsize=(6 * 2, num_samples_per_ds * 2))
+    for i, row in enumerate(axes):
+        for j, col in enumerate(row):
+            # add title above every two consecutive columns
+            ds_key = 'coco' if j < 2 else 'chest_x_ray' if j < 4 else 'random_normal'
+            if j % 2 == 0:
+                col.set_title(f"{ds_key.capitalize()}")
+            col.axis('off')
+            col.imshow(images_dict[ds_key][i][j % 2])
+    plt.savefig(f"{base_dir}/images_comparison.pdf")
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     base_dir = "/home/shimon/research/diffusion_inversions/FPI/results/null_text"
-    os.makedirs(base_dir, exist_ok=True)
-    ddim_steps = 10
-    run_coco(save_dir=f'{base_dir}/coco', num_ddim_step=ddim_steps, null_text=True)
-    run_chest_x_ray(save_dir=f'{base_dir}/chest_x_ray', num_ddim_step=ddim_steps, null_text=True)
-    run_normal_distributed_images(save_dir=f'{base_dir}/random_normal', num_ddim_step=ddim_steps, null_text=True)
-    dirs = [base_dir + "/" + f for f in ["chest_x_ray", "coco", "random_normal"]]
-    hists = []
-    for d in dirs:
-        hists.append(HistogramData(directory=d, name=d.split("/")[-1]))
-    plot_likelihoods_histograms(hists, save_path=f"{base_dir}/bpd_histograms.png", plot_key='bpd')
+
