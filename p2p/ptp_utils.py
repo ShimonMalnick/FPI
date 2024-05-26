@@ -68,7 +68,7 @@ def view_images(images, num_rows=1, offset_ratio=0.02, title=None):
     plt.tight_layout()
     plt.show()
 
-def plot_images(images, num_rows, num_cols, titles=None):
+def plot_images(images, num_rows, num_cols, titles=None, save_fig_path=None, show_fig=True):
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*2, num_rows*2))
     axes = axes.flatten()
 
@@ -79,7 +79,10 @@ def plot_images(images, num_rows, num_cols, titles=None):
             axes[i].set_title(title)
 
     plt.tight_layout()
-    plt.show()
+    if save_fig_path:
+        plt.savefig(save_fig_path)
+    if show_fig:
+        plt.show()
 
 
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False):
