@@ -60,7 +60,6 @@ def create_images_figure(
     images = sorted(images, key=lambda x: int(x.split("/")[-1].split("_")[0]))
     # plot a grid of the images
     fig = plt.figure()
-    # fig, ax = plt.subplots(4, 4)
     for i, img_path in enumerate(images):
         cur_ax = fig.add_subplot(4, 4, i + 1)
         img = plt.imread(img_path)

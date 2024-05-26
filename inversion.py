@@ -353,6 +353,7 @@ class MyInvertFixedPoint(MyInvertOptimized):
             prompt_embeds=None,
             num_iter=30,
             return_dict=True,
+            return_specific_latent=None,
     ):
         # 1. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -390,18 +391,19 @@ class MyInvertFixedPoint(MyInvertOptimized):
         self.inverse_scheduler.set_timesteps(num_inference_steps, device=device)
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.inverse_scheduler.timesteps
-
-        scores, grad_norm = [], []
+        specific_latent = None
         # 7. Denoising loop where we obtain the cross-attention maps.
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
 
                 latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance, guidance_scale)
+                if return_specific_latent is not None and i == return_specific_latent:
+                    specific_latent = latents.detach().clone()
                 progress_bar.update()
 
         latents = latents.detach().clone()
 
-        return EasyDict({'latents': latents, 'scores': scores, 'grad_norm': grad_norm, 'init_latents': init_latents})
+        return EasyDict({'latents': latents, 'init_latents': init_latents, "specific_latent": specific_latent})
 
     @torch.no_grad()
     def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False, guidance_scale=1.0):
