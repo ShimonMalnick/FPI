@@ -1,7 +1,9 @@
 from typing import Union
 import torch
 import numpy as np
+from diffusers import DDIMScheduler
 from torch.distributions import Normal
+from inversion import MyInvertFixedPoint
 
 
 def compute_likelihood_to_bpd(likelihood: Union[torch.Tensor, float], num_pixels: int):
@@ -26,3 +28,18 @@ def latent_to_bpd(latent: torch.FloatTensor):
     nll = -1 * likelihood
     return (nll / latent.nelement()) / np.log(2)
 
+
+def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None):
+    GUIDANCE_SCALE = 2
+    if pipe is None:
+        model_id = "CompVis/stable-diffusion-v1-4"
+        pipe = MyInvertFixedPoint.from_pretrained(
+            model_id,
+            scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
+            safety_checker=None,
+        ).to('cuda')
+    image = pipe(prompt=[""], latents=latent, guidance_scale=GUIDANCE_SCALE,
+                 num_inference_steps=num_ddim_steps, output_type='pil').images[0]
+    if save_path:
+        image.save(save_path)
+    return image
