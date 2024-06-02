@@ -45,17 +45,11 @@ def run_imagenet_experiment(num_classes=100, num_images_per_class=100, num_ddim_
             cur_time = time()
         image, label = ds[i]
         caption = ""  # performing everything with null text to neutralize the effect of the prompt
-        new_latents = pipe2(prompt=caption, image=image, strength=0.05, guidance_scale=GUIDANCE_SCALE,
-                            output_type="latent").images
-        # RUN FP inversion on vae_latent
-        inversed_results = pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
-                                       guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point,
-                                       return_specific_latent=middle_latent_step)
-        original_results_latent = inversed_results.latents
-        halfway_latent = inversed_results.specific_latent
-
-        halfway_result_latent = pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
-                                            guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point).latents
+        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption, image,
+                                                                                         middle_latent_step,
+                                                                                         num_ddim_steps,
+                                                                                         num_iter_fixed_point, pipe,
+                                                                                         pipe2)
 
         output = create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
                                     original_results_latent, standard_normal)
@@ -72,16 +66,24 @@ def run_imagenet_experiment(num_classes=100, num_images_per_class=100, num_ddim_
         torch.save(output, os.path.join(save_dir, f"sample_{i}_label{int(label.item())}.pt"))
 
 
+def get_all_latents(GUIDANCE_SCALE, caption, image, middle_latent_step, num_ddim_steps, num_iter_fixed_point, pipe,
+                    pipe2):
+    new_latents = pipe2(prompt=caption, image=image, strength=0.05, guidance_scale=GUIDANCE_SCALE,
+                        output_type="latent").images
+    # RUN FP inversion on vae_latent
+    inversed_results = pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
+                                   guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point,
+                                   return_specific_latent=middle_latent_step)
+    original_results_latent = inversed_results.latents
+    halfway_latent = inversed_results.specific_latent
+    halfway_result_latent = pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
+                                        guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point).latents
+    return halfway_latent, halfway_result_latent, original_results_latent
+
+
 def run_experiment(num_images=100, num_ddim_steps=10, middle_latent_step=4, save_dir=None, save_images=False,
                    ds_type='coco', dataset_indices=None, num_iter_fixed_point=20, timeit=False):
-    if ds_type == 'coco':
-        ds = CocoCaptions17()
-    elif ds_type == 'chest_x_ray':
-        ds = ChestXRay()
-    elif ds_type == 'random_normal':
-        ds = NormalDistributedDataset(ds_size=num_images)
-    else:
-        raise NotImplementedError(f"Dataset type {ds_type} is not supported")
+    ds = get_ds(ds_type, num_images)
     if save_dir is None:
         save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_partial_inverse_all_latents",
                                 ds_type)
@@ -103,17 +105,11 @@ def run_experiment(num_images=100, num_ddim_steps=10, middle_latent_step=4, save
             cur_time = time()
         image, caption = ds[i]
         caption = ""  # performing everything with null text to neutralize the effect of the prompt
-        new_latents = pipe2(prompt=caption, image=image, strength=0.05, guidance_scale=GUIDANCE_SCALE,
-                            output_type="latent").images
-        # RUN FP inversion on vae_latent
-        inversed_results = pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
-                                       guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point,
-                                       return_specific_latent=middle_latent_step)
-        original_results_latent = inversed_results.latents
-        halfway_latent = inversed_results.specific_latent
-
-        halfway_result_latent = pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
-                                            guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point).latents
+        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption, image,
+                                                                                         middle_latent_step,
+                                                                                         num_ddim_steps,
+                                                                                         num_iter_fixed_point, pipe,
+                                                                                         pipe2)
 
         output = create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
                                     original_results_latent, standard_normal)
@@ -127,6 +123,18 @@ def run_experiment(num_images=100, num_ddim_steps=10, middle_latent_step=4, save
         print(print_str)
 
         torch.save(output, os.path.join(save_dir, f"sample_{i}.pt"))
+
+
+def get_ds(ds_type, num_images):
+    if ds_type == 'coco':
+        ds = CocoCaptions17()
+    elif ds_type == 'chest_x_ray':
+        ds = ChestXRay()
+    elif ds_type == 'random_normal':
+        ds = NormalDistributedDataset(ds_size=num_images)
+    else:
+        raise NotImplementedError(f"Dataset type {ds_type} is not supported")
+    return ds
 
 
 def get_pipelines():
