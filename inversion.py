@@ -407,7 +407,6 @@ class MyInvertFixedPoint(MyInvertOptimized):
 
     @torch.no_grad()
     def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False, guidance_scale=1.0):
-        last = latent
         latent_0 = latent.clone()
         for i in range(num_iter):
             # predict the noise residual
@@ -423,10 +422,4 @@ class MyInvertFixedPoint(MyInvertOptimized):
 
             latent = self.scheduler_next_step(noise_pred, t, latent_0).prev_sample
 
-            score = torch.norm(last - latent)
-            last = latent
-            if i == num_iter - 1:
-                print('\n**** Reached Max Iterations: ', num_iter)
-
-        print('score: ', score.item())
         return latent
