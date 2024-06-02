@@ -10,10 +10,16 @@ class BaseConfig:
     middle_latent_step: int = 4
     num_iter_fixed_point: int = 5
     save_dir: Optional[str] = None
-    dataset_indices: Optional[Tuple[int]] = None
+    dataset_indices: Optional[Tuple[int, int]] = None
     GUIDANCE_SCALE: float = 2.0
     name: Optional[str] = None
     transform: Optional[Callable] = None
+
+    def to_dict(self):
+        d = self.__dict__.copy()
+        # popping un hashable values
+        d.pop('transform')
+        return d
 
 
 @dataclass

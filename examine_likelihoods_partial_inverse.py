@@ -4,6 +4,7 @@ use that for an FPI inversion that runs for X steps, we will examine the likelih
 For example, the first experiment is to run FPI for 50 steps and store the latent achieved at step 25. Then we wish to
 run the entire process again on this latent, and compare its difference from the result in the original run.
 """
+from PIL import Image
 from matplotlib import pyplot as plt
 from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset
 import os
@@ -19,6 +20,7 @@ from setup import setup_config
 from datasets import ImageNetSubset
 from torch.utils.data import DataLoader, Subset
 from configs import BaseConfig, CocoConfig, ChestXRayConfig, ImageNetSubsetConfig, NormalDistributedDatasetConfig
+from torchvision import transforms
 
 
 @torch.no_grad()
@@ -28,8 +30,8 @@ def get_all_latents(guidance_scale, caption, images, middle_latent_step, num_ddi
                                output_type="latent").images
     # RUN FP inversion on vae_latent
     inverse_results = inversion_pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
-                                             guidance_scale=guidance_scale, num_iter=num_iter_fixed_point,
-                                             return_specific_latent=middle_latent_step)
+                                            guidance_scale=guidance_scale, num_iter=num_iter_fixed_point,
+                                            return_specific_latent=middle_latent_step)
     original_results_latent = inverse_results.latents
     halfway_latent = inverse_results.specific_latent
     halfway_result_latent = inversion_pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
@@ -49,27 +51,26 @@ def run_experiment(config: BaseConfig, save_images=False, timeit=False):
     os.makedirs(config.save_dir, exist_ok=True)
     torch.manual_seed(8888)
 
-    inversion_pipe, img2img_pipe = get_pipelines()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    inversion_pipe, img2img_pipe = get_pipelines(device)
 
-    GUIDANCE_SCALE = 2
     standard_normal = Normal(0, 1)
 
-    dataloader = DataLoader(ds, batch_size=config.batch_size, shuffle=False)
-
+    dataloader = DataLoader(ds, batch_size=config.batch_size, shuffle=False, num_workers=16)
     for i, batch in enumerate(dataloader):
         if timeit:
             cur_time = time()
-        images = batch[0]
+        images = batch[0].to(device)
         caption = [""] * images.shape[0]  # performing everything with null text to neutralize the effect of the prompt
-        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption,
+        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(config.GUIDANCE_SCALE, caption,
                                                                                          images,
                                                                                          config.middle_latent_step,
                                                                                          config.num_ddim_steps,
                                                                                          config.num_iter_fixed_point,
                                                                                          inversion_pipe, img2img_pipe)
 
-        output = create_output_dict(config.batch_size, GUIDANCE_SCALE, halfway_latent, halfway_result_latent,
-                                    config.num_ddim_steps, original_results_latent, standard_normal)
+        output = create_output_dict(config, halfway_latent, halfway_result_latent,
+                                    original_results_latent, standard_normal)
 
         if isinstance(config, ImageNetSubsetConfig):
             output['class'] = batch[1]
@@ -86,35 +87,34 @@ def run_experiment(config: BaseConfig, save_images=False, timeit=False):
 
 def get_ds(config: BaseConfig):
     if isinstance(config, CocoConfig):
-        ds = CocoCaptions17()
+        ds = CocoCaptions17(transform=config.transform)
     elif isinstance(config, ChestXRayConfig):
-        ds = ChestXRay()
+        ds = ChestXRay(transform=config.transform)
     elif isinstance(config, NormalDistributedDatasetConfig):
-        ds = NormalDistributedDataset(ds_size=config.ds_size)
+        ds = NormalDistributedDataset(ds_size=config.ds_size, transform=config.transform)
     elif isinstance(config, ImageNetSubsetConfig):
         ds = ImageNetSubset(split=config.split, num_classes=config.num_classes,
-                            num_images_per_class=config.num_images_per_class)
+                            num_images_per_class=config.num_images_per_class, transform=config.transform)
     else:
         raise NotImplementedError(f"Dataset type is not supported")
     return ds
 
 
-def get_pipelines():
+def get_pipelines(device: torch.device):
     model_id = "CompVis/stable-diffusion-v1-4"
     inversion_pipe = MyInvertFixedPoint.from_pretrained(
         model_id,
         scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
         safety_checker=None,
-    ).to('cuda')
+    ).to(device)
     img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
                                                                   scheduler=DDIMScheduler.from_pretrained(model_id,
                                                                                                           subfolder="scheduler"),
-                                                                  ).to("cuda")
+                                                                  ).to(device)
     return inversion_pipe, img2img_pipe
 
 
-def create_output_dict(batch_size, GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
-                       original_results_latent,
+def create_output_dict(config: BaseConfig, halfway_latent, halfway_result_latent, original_results_latent,
                        standard_normal):
     # we examine the latents log-likelihood compared to standard normal distribution R.V,
     # as this is the distribution used for latent diffusion model
@@ -127,9 +127,7 @@ def create_output_dict(batch_size, GUIDANCE_SCALE, halfway_latent, halfway_resul
               "halfway_latent_likelihood": standard_normal.log_prob(halfway_latent).sum().item(),
               "halfway_latent_run_again": halfway_result_latent,
               "halfway_latent_run_again_likelihood": standard_normal.log_prob(halfway_result_latent).sum().item(),
-              "NUM_DDIM_STEPS": num_ddim_steps,
-              "GUIDANCE_SCALE": GUIDANCE_SCALE,
-              "batch_size": batch_size,
+              "config": config.to_dict(),
               }
     return output
 
@@ -193,7 +191,7 @@ def run_experiment_on_multiple_datasets(dsets=None, exp_dir_base=None):
     if dsets is None:
         dsets = ['coco', 'chest_x_ray', 'random_normal']
     if exp_dir_base is None:
-        exp_dir_base = f"{repo_dir}/results_fpi_5_iters"
+        exp_dir_base = f"{setup_config['REPO_BASE']}/results_fpi_5_iters"
     for ds_type in dsets:
         cur_exp_dir = f"{exp_dir_base}/{ds_type}_test"
         save_latents_images(cur_exp_dir, save_path=f"{cur_exp_dir}/images", num_images=5)
@@ -201,10 +199,24 @@ def run_experiment_on_multiple_datasets(dsets=None, exp_dir_base=None):
                        num_iter_fixed_point=5, timeit=True)
 
 
+def run_grayscale_duplicated_coco(output_path=None):
+    if output_path is None:
+        output_path = f"{setup_config['OUTPUT_ROOT']}/results_grayscale_coco"
+    transform = transforms.Compose([lambda image: Image.open(image).convert('L').resize((512, 512)).convert('RGB'),
+                                    transforms.ToTensor()])
+    config = CocoConfig(save_dir=output_path, transform=transform)
+    run_experiment(config)
+
+
 if __name__ == '__main__':
     # set logging level to info
     logging.basicConfig(level=logging.INFO)
-    repo_dir = setup_config['REPO_BASE']
-    run_experiment(250, save_dir=f'{repo_dir}/results_test_batches', save_images=False, timeit=True, batch_size=16)
-    # save_dir = f"{repo_dir}/results_imagenet"
-    # run_imagenet_experiment(save_dir=save_dir, save_images=True)
+    # run_grayscale_duplicated_coco()
+    ds_indices = (0, 2500)
+    # ds_indices = (2500, 5000)
+    # ds_indices = (5000, 7500)
+    # ds_indices = (7500, 10000)
+    config = ImageNetSubsetConfig(save_dir=f"{setup_config['OUTPUT_ROOT']}/results_imagenet_subset_{ds_indices[0]}_to_{ds_indices[1]}",
+                                  dataset_indices=ds_indices)
+    ds = get_ds(config)
+    run_experiment(config=config)
