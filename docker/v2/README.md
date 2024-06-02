@@ -26,4 +26,3 @@ runai logs job <job-name>
 runai bash <job-name>
 ```
 
-
