@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable
 
 
 @dataclass
@@ -11,16 +11,21 @@ class BaseConfig:
     num_iter_fixed_point: int = 5
     save_dir: Optional[str] = None
     dataset_indices: Optional[Tuple[int]] = None
+    GUIDANCE_SCALE: float = 2.0
+    name: Optional[str] = None
+    transform: Optional[Callable] = None
 
 
 @dataclass
 class CocoConfig(BaseConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_coco")
+    dataset_indices = (0, 500)
 
 
 @dataclass
 class ChestXRayConfig(BaseConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_chest_xray")
+    dataset_indices = (0, 500)
 
 
 @dataclass
