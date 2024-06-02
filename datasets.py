@@ -1,18 +1,34 @@
 import json
 import os
+from pathlib import Path
+from typing import Union, Any
+
 import torch
 from matplotlib import pyplot as plt
 from p2p.p2p_functions import load_im_into_format_from_path
 from torch.utils.data import Dataset
 from torchvision import transforms
-from torchvision.transforms import ToPILImage, ToTensor
+from torchvision.transforms import ToPILImage
+from torchvision.datasets import ImageNet
+from setup import setup_config
 
-COCO_ROOT = "/home/shimon/research/datasets/mscoco17"
-CHEST_XRAY_ROOT = "/home/shimon/research/datasets/chest_xray"
+datasets_paths = {"COCO_ROOT": "mscoco17",
+                  "CHEST_XRAY_ROOT": "chest_xray",
+                  "IMAGENET_ROOT": "imagenet"}
+
+datasets_paths = {k: os.path.join(setup_config['DATASETS_ROOT'], v) for k, v in datasets_paths.items()}
+
+
+class ImageNetSubset(ImageNet):
+    def __init__(self, root: Union[str, Path] = datasets_paths['IMAGENET_ROOT'], split: str = 'train', num_classes=100,
+                 num_images_per_class=100, **kwargs: Any):
+        super().__init__(root, split, **kwargs)
+        self._num_classes = num_classes
+        self._num_images_per_class = num_images_per_class
 
 
 class CocoCaptions17(Dataset):
-    def __init__(self, root=COCO_ROOT, transform=None):
+    def __init__(self, root=datasets_paths["COCO_ROOT"], transform=None):
         self.images_root = f"{root}/val2017"
         self.images_list = os.listdir(self.images_root)
         self.len = len(self.images_list)
@@ -50,7 +66,7 @@ class CocoCaptions17(Dataset):
 
 
 class ChestXRay(Dataset):
-    def __init__(self, root=CHEST_XRAY_ROOT, transform=None):
+    def __init__(self, root=datasets_paths["CHEST_XRAY_ROOT"], transform=None):
         self.image_dirs = ["images_0" + ("0" + str(i) if i < 10 else str(i)) for i in range(1, 12)]
         self.data_root = root
         self.images = self.__create_images_data()
@@ -109,6 +125,7 @@ class FolderDataset(Dataset):
 
 if __name__ == '__main__':
     import PIL.Image as Image
+
     ds = CocoCaptions17(transform=lambda x: Image.open(x))
     # ds = ChestXRay(transform=lambda x: Image.open(x))
     # ds = NormalDistributedDataset()
