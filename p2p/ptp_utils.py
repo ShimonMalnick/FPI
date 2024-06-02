@@ -68,8 +68,9 @@ def view_images(images, num_rows=1, offset_ratio=0.02, title=None):
     plt.tight_layout()
     plt.show()
 
+
 def plot_images(images, num_rows, num_cols, titles=None, save_fig_path=None, show_fig=True):
-    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols*2, num_rows*2))
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 2, num_rows * 2))
     axes = axes.flatten()
 
     for i, (image, title) in enumerate(zip(images, titles)):
@@ -347,8 +348,7 @@ def get_time_words_attention_alpha(prompts, num_steps,
 
 
 def plot_interpolation(images, images_titles, suptitle=None):
-    fig, axes = plt.subplots(1, len(images), figsize=(2*len(images), 5))
-
+    fig, axes = plt.subplots(1, len(images), figsize=(2 * len(images), 5))
 
     for i, ax in enumerate(axes):
         ax.imshow(images[i])
@@ -365,7 +365,8 @@ def slerp(t, v0, v1, DOT_THRESHOLD=0.9995):
     """ helper function to spherically interpolate two arrays v1 v2
      of shape [B C H W]"""
 
-    dot = torch.sum(v0 * v1 / (v0.norm(p=2, dim=[1, 2, 3], keepdim=True) * v1.norm(p=2, dim=[1, 2, 3], keepdim=True)), dim=[1, 2, 3], keepdim=True)
+    dot = torch.sum(v0 * v1 / (v0.norm(p=2, dim=[1, 2, 3], keepdim=True) * v1.norm(p=2, dim=[1, 2, 3], keepdim=True)),
+                    dim=[1, 2, 3], keepdim=True)
     # above_th = torch.where(torch.abs(dot) > DOT_THRESHOLD)
     # for i in above_th
     # if torch.abs(dot) > DOT_THRESHOLD:
@@ -395,18 +396,19 @@ def match_patch_statistics(src, ref, patch_size):
     ref_array = np.array(ref).astype(np.float32)
 
     # Calculate patch-wise means and standard deviations for the reference image
-    ref_mean = uniform_filter(ref_array, size=patch_size, mode='constant', origin=-patch_size//2)
-    ref_sq_mean = uniform_filter(ref_array**2, size=patch_size, mode='constant', origin=-patch_size//2)
-    ref_std = np.sqrt(np.maximum(ref_sq_mean - ref_mean**2, 0))
+    ref_mean = uniform_filter(ref_array, size=patch_size, mode='constant', origin=-patch_size // 2)
+    ref_sq_mean = uniform_filter(ref_array ** 2, size=patch_size, mode='constant', origin=-patch_size // 2)
+    ref_std = np.sqrt(np.maximum(ref_sq_mean - ref_mean ** 2, 0))
 
     # Calculate patch-wise means and standard deviations for the source image
-    src_mean = uniform_filter(src_array, size=patch_size, mode='constant', origin=-patch_size//2)
-    src_sq_mean = uniform_filter(src_array**2, size=patch_size, mode='constant', origin=-patch_size//2)
-    src_std = np.sqrt(np.maximum(src_sq_mean - src_mean**2, 0))
+    src_mean = uniform_filter(src_array, size=patch_size, mode='constant', origin=-patch_size // 2)
+    src_sq_mean = uniform_filter(src_array ** 2, size=patch_size, mode='constant', origin=-patch_size // 2)
+    src_std = np.sqrt(np.maximum(src_sq_mean - src_mean ** 2, 0))
 
     # Adjust the source image patches to match the statistics of the reference image
     for c in range(src_array.shape[2]):
-        src_array[:, :, c] = (src_array[:, :, c] - src_mean[:, :, c]) * (ref_std[:, :, c] / src_std[:, :, c]) + ref_mean[:, :, c]
+        src_array[:, :, c] = (src_array[:, :, c] - src_mean[:, :, c]) * (
+                    ref_std[:, :, c] / src_std[:, :, c]) + ref_mean[:, :, c]
 
     # Clip the resulting image to [0, 255]
     src_array = np.clip(src_array, 0, 255)
@@ -421,7 +423,7 @@ class Load_512:
 
     def __init__(self):
         self.trans = transforms.Compose([transforms.ToTensor(),
-                                         transforms.Normalize([0.5]*3, [0.5]*3)])
+                                         transforms.Normalize([0.5] * 3, [0.5] * 3)])
 
     def __call__(self, image_path):
         im = self.load_512(image_path)
@@ -440,11 +442,11 @@ class Load_512:
             image = image.convert('RGB')
         image = np.array(image)
         h, w, c = image.shape
-        left = min(left, w-1)
+        left = min(left, w - 1)
         right = min(right, w - left - 1)
         top = min(top, h - left - 1)
         bottom = min(bottom, h - top - 1)
-        image = image[top:h-bottom, left:w-right]
+        image = image[top:h - bottom, left:w - right]
         h, w, c = image.shape
         if h < w:
             offset = (w - h) // 2
@@ -468,7 +470,7 @@ class HistogramMatching(object):
         self.match_zero = 0.0
 
     def apply(self, source: np.ndarray,
-               reference: np.ndarray) -> np.ndarray:
+              reference: np.ndarray) -> np.ndarray:
         result = np.copy(source)
         for channel in self.channels:
             result[:, :, channel] = \
@@ -525,7 +527,7 @@ class FeatureDistributionMatching(object):
         self.channels = range(channels)
 
     def apply(self, source: np.ndarray,
-               reference: np.ndarray) -> np.ndarray:
+              reference: np.ndarray) -> np.ndarray:
 
         matching_result = self._matching(source[:, :, self.channels],
                                          reference[:, :, self.channels])
@@ -638,4 +640,3 @@ class FeatureDistributionMatching(object):
 
             feature_mat_transformed = (feature_mat_white @ sqrt_s) @ u_mat.T
         return feature_mat_transformed
-
