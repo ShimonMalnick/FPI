@@ -17,141 +17,104 @@ from p2p.ptp_utils import plot_images
 from time import time
 from setup import setup_config
 from datasets import ImageNetSubset
+from torch.utils.data import DataLoader, Subset
+from configs import BaseConfig, CocoConfig, ChestXRayConfig, ImageNetSubsetConfig, NormalDistributedDatasetConfig
 
 
 @torch.no_grad()
-def run_imagenet_experiment(num_classes=100, num_images_per_class=100, num_ddim_steps=10, middle_latent_step=4,
-                            save_dir=None, save_images=False, dataset_indices=None, num_iter_fixed_point=5,
-                            timeit=False):
-    ds = ImageNetSubset(split='train', num_classes=num_classes, num_images_per_class=num_images_per_class)
-    if save_dir is None:
-        save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_imagenet")
-
-    os.makedirs(save_dir, exist_ok=True)
-
-    if dataset_indices is None:
-        dataset_indices = (0, len(ds))
-    print(f"Saving results to {save_dir}")
-    os.makedirs(save_dir, exist_ok=True)
-    torch.manual_seed(8888)
-
-    pipe, pipe2 = get_pipelines()
-
-    GUIDANCE_SCALE = 2
-    standard_normal = Normal(0, 1)
-
-    for i in range(*dataset_indices):
-        if timeit:
-            cur_time = time()
-        image, label = ds[i]
-        caption = ""  # performing everything with null text to neutralize the effect of the prompt
-        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption, image,
-                                                                                         middle_latent_step,
-                                                                                         num_ddim_steps,
-                                                                                         num_iter_fixed_point, pipe,
-                                                                                         pipe2)
-
-        output = create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
-                                    original_results_latent, standard_normal)
-        output['label'] = label
-
-        if save_images:
-            output['image'] = image
-        n_images = dataset_indices[1] - dataset_indices[0]
-        print_str = f"finished image {i + 1}/{n_images}"
-        if timeit:
-            print_str += f"in {(time() - cur_time)} ms"
-        print(print_str)
-
-        torch.save(output, os.path.join(save_dir, f"sample_{i}_label{int(label.item())}.pt"))
-
-
-def get_all_latents(GUIDANCE_SCALE, caption, image, middle_latent_step, num_ddim_steps, num_iter_fixed_point, pipe,
-                    pipe2):
-    new_latents = pipe2(prompt=caption, image=image, strength=0.05, guidance_scale=GUIDANCE_SCALE,
-                        output_type="latent").images
+def get_all_latents(guidance_scale, caption, images, middle_latent_step, num_ddim_steps, num_iter_fixed_point,
+                    inversion_pipe, img2img_pipe):
+    new_latents = img2img_pipe(prompt=caption, image=images, strength=0.05, guidance_scale=guidance_scale,
+                               output_type="latent").images
     # RUN FP inversion on vae_latent
-    inversed_results = pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
-                                   guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point,
-                                   return_specific_latent=middle_latent_step)
-    original_results_latent = inversed_results.latents
-    halfway_latent = inversed_results.specific_latent
-    halfway_result_latent = pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
-                                        guidance_scale=GUIDANCE_SCALE, num_iter=num_iter_fixed_point).latents
+    inverse_results = inversion_pipe.invert(caption, latents=new_latents, num_inference_steps=num_ddim_steps,
+                                             guidance_scale=guidance_scale, num_iter=num_iter_fixed_point,
+                                             return_specific_latent=middle_latent_step)
+    original_results_latent = inverse_results.latents
+    halfway_latent = inverse_results.specific_latent
+    halfway_result_latent = inversion_pipe.invert(caption, latents=halfway_latent, num_inference_steps=num_ddim_steps,
+                                                  guidance_scale=guidance_scale, num_iter=num_iter_fixed_point).latents
     return halfway_latent, halfway_result_latent, original_results_latent
 
 
-def run_experiment(num_images=100, num_ddim_steps=10, middle_latent_step=4, save_dir=None, save_images=False,
-                   ds_type='coco', dataset_indices=None, num_iter_fixed_point=20, timeit=False):
-    ds = get_ds(ds_type, num_images)
-    if save_dir is None:
-        save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_partial_inverse_all_latents",
-                                ds_type)
-    os.makedirs(save_dir, exist_ok=True)
+@torch.no_grad()
+def run_experiment(config: BaseConfig, save_images=False, timeit=False):
+    ds = get_ds(config)
+    os.makedirs(config.save_dir, exist_ok=True)
 
-    if dataset_indices is None:
-        dataset_indices = (0, num_images)
-    print(f"Saving results to {save_dir}")
-    os.makedirs(save_dir, exist_ok=True)
+    if config.dataset_indices is not None:
+        ds = Subset(ds, range(*config.dataset_indices))
+
+    print(f"Saving results to {config.save_dir}")
+    os.makedirs(config.save_dir, exist_ok=True)
     torch.manual_seed(8888)
 
-    pipe, pipe2 = get_pipelines()
+    inversion_pipe, img2img_pipe = get_pipelines()
 
     GUIDANCE_SCALE = 2
     standard_normal = Normal(0, 1)
 
-    for i in range(*dataset_indices):
+    dataloader = DataLoader(ds, batch_size=config.batch_size, shuffle=False)
+
+    for i, batch in enumerate(dataloader):
         if timeit:
             cur_time = time()
-        image, caption = ds[i]
-        caption = ""  # performing everything with null text to neutralize the effect of the prompt
-        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption, image,
-                                                                                         middle_latent_step,
-                                                                                         num_ddim_steps,
-                                                                                         num_iter_fixed_point, pipe,
-                                                                                         pipe2)
+        images = batch[0]
+        caption = [""] * images.shape[0]  # performing everything with null text to neutralize the effect of the prompt
+        halfway_latent, halfway_result_latent, original_results_latent = get_all_latents(GUIDANCE_SCALE, caption,
+                                                                                         images,
+                                                                                         config.middle_latent_step,
+                                                                                         config.num_ddim_steps,
+                                                                                         config.num_iter_fixed_point,
+                                                                                         inversion_pipe, img2img_pipe)
 
-        output = create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
-                                    original_results_latent, standard_normal)
+        output = create_output_dict(config.batch_size, GUIDANCE_SCALE, halfway_latent, halfway_result_latent,
+                                    config.num_ddim_steps, original_results_latent, standard_normal)
+
+        if isinstance(config, ImageNetSubsetConfig):
+            output['class'] = batch[1]
 
         if save_images:
-            output['image'] = image
-        n_images = dataset_indices[1] - dataset_indices[0]
-        print_str = f"finished image {i + 1}/{n_images}"
+            output['images'] = images
+        print_str = f"finished batch {i + 1}/{len(dataloader)}"
         if timeit:
-            print_str += f"in {(time() - cur_time)} ms"
+            print_str += f"in {(time() - cur_time)} seconds"
         print(print_str)
 
-        torch.save(output, os.path.join(save_dir, f"sample_{i}.pt"))
+        torch.save(output, os.path.join(config.save_dir, f"batch_{i}.pt"))
 
 
-def get_ds(ds_type, num_images):
-    if ds_type == 'coco':
+def get_ds(config: BaseConfig):
+    if isinstance(config, CocoConfig):
         ds = CocoCaptions17()
-    elif ds_type == 'chest_x_ray':
+    elif isinstance(config, ChestXRayConfig):
         ds = ChestXRay()
-    elif ds_type == 'random_normal':
-        ds = NormalDistributedDataset(ds_size=num_images)
+    elif isinstance(config, NormalDistributedDatasetConfig):
+        ds = NormalDistributedDataset(ds_size=config.ds_size)
+    elif isinstance(config, ImageNetSubsetConfig):
+        ds = ImageNetSubset(split=config.split, num_classes=config.num_classes,
+                            num_images_per_class=config.num_images_per_class)
     else:
-        raise NotImplementedError(f"Dataset type {ds_type} is not supported")
+        raise NotImplementedError(f"Dataset type is not supported")
     return ds
 
 
 def get_pipelines():
     model_id = "CompVis/stable-diffusion-v1-4"
-    pipe = MyInvertFixedPoint.from_pretrained(
+    inversion_pipe = MyInvertFixedPoint.from_pretrained(
         model_id,
         scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
         safety_checker=None,
     ).to('cuda')
-    pipe2 = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
-                                                           scheduler=DDIMScheduler.from_pretrained(model_id,
-                                                                                                   subfolder="scheduler"),
-                                                           ).to("cuda")
-    return pipe, pipe2
+    img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
+                                                                  scheduler=DDIMScheduler.from_pretrained(model_id,
+                                                                                                          subfolder="scheduler"),
+                                                                  ).to("cuda")
+    return inversion_pipe, img2img_pipe
 
 
-def create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps, original_results_latent,
+def create_output_dict(batch_size, GUIDANCE_SCALE, halfway_latent, halfway_result_latent, num_ddim_steps,
+                       original_results_latent,
                        standard_normal):
     # we examine the latents log-likelihood compared to standard normal distribution R.V,
     # as this is the distribution used for latent diffusion model
@@ -166,6 +129,7 @@ def create_output_dict(GUIDANCE_SCALE, halfway_latent, halfway_result_latent, nu
               "halfway_latent_run_again_likelihood": standard_normal.log_prob(halfway_result_latent).sum().item(),
               "NUM_DDIM_STEPS": num_ddim_steps,
               "GUIDANCE_SCALE": GUIDANCE_SCALE,
+              "batch_size": batch_size,
               }
     return output
 
@@ -241,5 +205,6 @@ if __name__ == '__main__':
     # set logging level to info
     logging.basicConfig(level=logging.INFO)
     repo_dir = setup_config['REPO_BASE']
+    run_experiment(250, save_dir=f'{repo_dir}/results_test_batches', save_images=False, timeit=True, batch_size=16)
     # save_dir = f"{repo_dir}/results_imagenet"
     # run_imagenet_experiment(save_dir=save_dir, save_images=True)

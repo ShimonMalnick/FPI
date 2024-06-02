@@ -2,10 +2,8 @@ import json
 import os
 from pathlib import Path
 from typing import Union, Any
-
+from PIL import Image
 import torch
-from matplotlib import pyplot as plt
-from p2p.p2p_functions import load_im_into_format_from_path
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.transforms import ToPILImage
@@ -17,6 +15,10 @@ datasets_paths = {"COCO_ROOT": "mscoco17",
                   "IMAGENET_ROOT": "imagenet"}
 
 datasets_paths = {k: os.path.join(setup_config['DATASETS_ROOT'], v) for k, v in datasets_paths.items()}
+
+
+def get_default_transform():
+    return transforms.Compose([lambda image: Image.open(image).convert('RGB').resize((512, 512)), transforms.ToTensor()])
 
 
 class ImageNetSubset(ImageNet):
@@ -35,7 +37,7 @@ class CocoCaptions17(Dataset):
         with open(f"{root}/annotations/captions_val2017.json") as f:
             self.captions_map = self._parse_captions(json.load(f)['annotations'])
         if transform is None:
-            self.transform = transforms.Compose([load_im_into_format_from_path])
+            self.transform = get_default_transform()
         else:
             self.transform = transform
 
@@ -72,7 +74,7 @@ class ChestXRay(Dataset):
         self.images = self.__create_images_data()
         self.static_caption = "A chest X-ray image"
         if transform is None:
-            self.transform = transforms.Compose([load_im_into_format_from_path])
+            self.transform = get_default_transform()
         else:
             self.transform = transform
 
@@ -92,11 +94,14 @@ class ChestXRay(Dataset):
 
 
 class NormalDistributedDataset(Dataset):
-    def __init__(self, ds_size=500, images_shape=(3, 512, 512)):
+    def __init__(self, ds_size=500, images_shape=(3, 512, 512), transform=None):
         self.ds_size = ds_size
         self.data = torch.randn(ds_size, *images_shape)
         self.static_caption = "A random noise image"
-        self.transform = ToPILImage()
+        if transform is None:
+            self.transform = transforms.ToTensor()
+        else:
+            self.transform = transform
 
     def __len__(self):
         return self.ds_size
@@ -112,7 +117,7 @@ class FolderDataset(Dataset):
         self.len = len(self.images)
         self.static_catpion = static_caption
         if transform is None:
-            self.transform = transforms.Compose([load_im_into_format_from_path])
+            self.transform = get_default_transform()
         else:
             self.transform = transform
 
@@ -121,17 +126,3 @@ class FolderDataset(Dataset):
 
     def __getitem__(self, item):
         return self.transform(os.path.join(self.root, self.images[item])), self.static_catpion
-
-
-if __name__ == '__main__':
-    import PIL.Image as Image
-
-    ds = CocoCaptions17(transform=lambda x: Image.open(x))
-    # ds = ChestXRay(transform=lambda x: Image.open(x))
-    # ds = NormalDistributedDataset()
-    for i in range(5):
-        print("image path:", ds.get_image_path_by_index(i))
-        cur_image, cur_caption = ds[i]
-        print(cur_caption)
-        plt.imshow(cur_image)
-        plt.show()
