@@ -9,13 +9,13 @@ docker push shimonmal/torch:fpi
 2. Then run the docker:
 On the A5000:
 ```shell
-docker run --gpus all -it -v $(pwd):/FPI shimonmal/torch:fpi
+docker run --gpus all -it -v $(pwd):/storage/malnick/ shimonmal/torch:fpi
 ```
 
 On runai:
 ```shell
-runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm -e COCO_ROOT=/storage/malnick/mscoco17 -e CHEST_XRAY_ROOT=/storage/malnick/chest_xray
-runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm --interactive -e COCO_ROOT=/storage/malnick/mscoco17 -e CHEST_XRAY_ROOT=/storage/malnick/chest_xray --command -- sleep 300
+runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi
+runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm --interactive -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi --command -- sleep infinity
 ```
 
 # useful commands
