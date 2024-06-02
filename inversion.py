@@ -304,7 +304,6 @@ class MyInvertOptimized(MyInvert):
             latents = self.prepare_image_latents(image, batch_size, self.vae.dtype, device)
 
             # 5. Encode input prompt
-            # num_images_per_prompt = num_images_per_prompt
             prompt_embeds = self._encode_prompt(
                 prompt,
                 device,
