@@ -1,13 +1,14 @@
 import json
 import os
 from pathlib import Path
-from typing import Union, Any
+from typing import Union, Any, List, Tuple, Callable
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageNet
 from setup import setup_config
+from configs import AugmentationConfig, IdentityConfig
 
 datasets_paths = {"COCO_ROOT": "mscoco17",
                   "CHEST_XRAY_ROOT": "chest_xray",
@@ -109,6 +110,37 @@ class ChestXRay(Dataset):
 
     def __len__(self):
         return len(self.images)
+
+
+class AugmentedDataset(Dataset):
+    def __init__(self, augmentations: List[AugmentationConfig], dataset: Dataset, transform=None):
+        self.dataset = dataset
+        if transform is None:
+            self.transform = get_default_transform()
+        else:
+            self.transform = transform
+        self.augmentations = self.create_augmentations_list([str(IdentityConfig), IdentityConfig()] + augmentations)
+        self.number_of_augmentations = len(augmentations)
+        self.len = len(self.dataset) * self.number_of_augmentations
+
+    def __getitem__(self, item):
+        correct_idx = item // self.number_of_augmentations
+        image, caption = super().__getitem__(correct_idx)
+        augmentation_name, augmentation = self.augmentations[item % self.number_of_augmentations]
+        return augmentation(image), augmentation_name
+
+    def __len__(self):
+        return self.len
+
+    @staticmethod
+    def create_augmentations_list(augmentations: List[AugmentationConfig]) -> List[Tuple[str, Callable]]:
+        callables_augs = []
+        for aug in augmentations:
+            public_members = [attr for attr in dir(aug) if not attr.startswith('_') and not attr == 'augmentation_func']
+            name = str(aug)
+            func = aug.augmentation_func(**{attr: getattr(aug, attr) for attr in public_members})
+            callables_augs.append((name, func))
+        return callables_augs
 
 
 class NoisedCocoCaptions17(CocoCaptions17):

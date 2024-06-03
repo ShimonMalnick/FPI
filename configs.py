@@ -1,6 +1,10 @@
+import numbers
 import os
+from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Sequence, Union
+from torchvision.transforms.v2 import ScaleJitter, RandomCrop, RandomAffine, RandomPerspective, \
+    RandomVerticalFlip, RandomChannelPermutation, RandomPhotometricDistort, GaussianBlur
 
 
 @dataclass
@@ -58,3 +62,87 @@ class NoisedCocoCaptions17Config(BaseConfig):
     noise_multiplier: float = 6.0
 
 
+@dataclass
+class AugmentationConfig:
+    augmentation_func: Callable
+
+    @abstractmethod
+    def __str__(self):
+        raise NotImplementedError
+
+
+@dataclass
+class ScaleJitterConfig(AugmentationConfig):
+    target_size: Tuple[int, int] = (512, 512)
+    scale_range: Tuple[float, float] = (0.5, 2.0)
+    augmentation_func: Callable = ScaleJitter
+
+    def __str__(self):
+        return f"ScaleJitter(target_size={self.target_size}, scale_range={self.scale_range})"
+
+
+@dataclass
+class IdentityConfig(AugmentationConfig):
+    augmentation_func: Callable = lambda x: x
+
+    def __str__(self):
+        return "Identity"
+
+
+@dataclass
+class RandomCropConfig(AugmentationConfig):
+    size: Union[int, Sequence[int]] = (256, 256)
+    augmentation_func: Callable = RandomCrop
+
+    def __str__(self):
+        return f"RandomCrop(size={self.size})"
+
+
+@dataclass
+class RandomAffineConfig(AugmentationConfig):
+    degrees: Union[numbers.Number, Sequence] = 90
+    augmentation_func: Callable = RandomAffine
+
+    def __str__(self):
+        return f"RandomAffine(degrees={self.degrees})"
+
+
+@dataclass
+class RandomPerspectiveConfig(AugmentationConfig):
+    augmentation_func: Callable = RandomPerspective
+
+    def __str__(self):
+        return "RandomPerspective"
+
+
+@dataclass
+class RandomVerticalFlipConfig(AugmentationConfig):
+    p: float = 1.0  # used not randomly, i.e. flipping the image vertically
+    augmentation_func: Callable = RandomVerticalFlip
+
+    def __str__(self):
+        return "RandomVerticalFlip"
+
+
+@dataclass
+class RandomChannelPermutationConfig(AugmentationConfig):
+    augmentation_func: Callable = RandomChannelPermutation
+
+    def __str__(self):
+        return "RandomChannelPermutation"
+
+@dataclass
+class RandomPhotometricDistortConfig(AugmentationConfig):
+    augmentation_func: Callable = RandomPhotometricDistort
+
+    def __str__(self):
+        return "RandomPhotometricDistort"
+
+
+@dataclass
+class GaussianBlurConfig(AugmentationConfig):
+    kernel_size: Union[int, Sequence[int]] = 32
+    augmentation_func: Callable = GaussianBlur
+
+    def __str__(self):
+        return f"GaussianBlur(kernel_size={self.kernel_size})"
