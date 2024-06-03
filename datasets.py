@@ -6,7 +6,6 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
-from torchvision.transforms import ToPILImage
 from torchvision.datasets import ImageNet
 from setup import setup_config
 
@@ -18,7 +17,8 @@ datasets_paths = {k: os.path.join(setup_config['DATASETS_ROOT'], v) for k, v in 
 
 
 def get_default_transform():
-    return transforms.Compose([lambda image: Image.open(image).convert('RGB').resize((512, 512)), transforms.ToTensor()])
+    return transforms.Compose(
+        [lambda image: Image.open(image).convert('RGB').resize((512, 512)), transforms.ToTensor()])
 
 
 class ImageNetSubset(ImageNet):
@@ -27,6 +27,24 @@ class ImageNetSubset(ImageNet):
         super().__init__(root, split, **kwargs)
         self._num_classes = num_classes
         self._num_images_per_class = num_images_per_class
+        self.classes = self.classes[:num_classes]
+        self.class_to_idx = {cls: idx for idx, clss in enumerate(self.classes) for cls in clss}
+        self.classes_indices = set(self.class_to_idx.values())
+        self.samples = self.__create_samples_subset()
+        self.targets = [s[1] for s in self.samples]
+        if self.transform is None:
+            self.transform = transforms.Compose(
+                [lambda image: image.convert('RGB').resize((512, 512)), transforms.ToTensor()])
+
+    def __create_samples_subset(self):
+        samples = []
+        # initialize counter for all the classes indices
+        counters = {i: self._num_images_per_class for i in self.classes_indices}
+        for name, label in self.samples:
+            if label in self.classes_indices and counters[label] > 0:
+                samples.append((name, label))
+                counters[label] -= 1
+        return samples
 
 
 class CocoCaptions17(Dataset):
