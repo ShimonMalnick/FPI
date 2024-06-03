@@ -40,6 +40,7 @@ class ImageNetSubsetConfig(BaseConfig):
     split: str = 'train'
     num_classes: int = 100
     num_images_per_class: int = 100
+    batch_size: int = 4
 
 
 @dataclass
