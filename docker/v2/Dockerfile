@@ -30,5 +30,3 @@ RUN source activate fpi && pip install psutil pyparsing python-dateutil PyYAML r
 RUN source activate fpi && pip install tqdm triton typing_extensions urllib3 zipp easydict opencv-python
 RUN source activate fpi && pip install accelerate
 RUN source activate fpi && pip install 'transformers @ git+https://github.com/huggingface/transformers@3ec10e6c76362191b61260300fe1d6173a8dd7e1'
-
-#ENTRYPOINT ["/bin/bash", "-c", "cd ./FPI && chmod +x ./entry_script.sh && ./entry_script.sh"]
