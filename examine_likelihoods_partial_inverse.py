@@ -4,6 +4,8 @@ use that for an FPI inversion that runs for X steps, we will examine the likelih
 For example, the first experiment is to run FPI for 50 steps and store the latent achieved at step 25. Then we wish to
 run the entire process again on this latent, and compare its difference from the result in the original run.
 """
+import sys
+
 from PIL import Image
 from matplotlib import pyplot as plt
 from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset
@@ -104,12 +106,15 @@ def get_pipelines(device: torch.device):
     model_id = "CompVis/stable-diffusion-v1-4"
     inversion_pipe = MyInvertFixedPoint.from_pretrained(
         model_id,
-        scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
+        scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler", local_files_only=True),
+        local_files_only=True,
         safety_checker=None,
     ).to(device)
     img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
                                                                   scheduler=DDIMScheduler.from_pretrained(model_id,
-                                                                                                          subfolder="scheduler"),
+                                                                                                          subfolder="scheduler",
+                                                                                                          local_files_only=True),
+                                                                  local_files_only=True,
                                                                   ).to(device)
     return inversion_pipe, img2img_pipe
 
@@ -208,15 +213,16 @@ def run_grayscale_duplicated_coco(output_path=None):
     run_experiment(config)
 
 
+def run_imagenet_on_different_devices(num_images=10000, num_devices=4):
+    cur_idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+    ds_indices = (cur_idx * num_images // num_devices, (cur_idx + 1) * num_images // num_devices)
+    config = ImageNetSubsetConfig(
+        save_dir=f"{setup_config['OUTPUT_ROOT']}/results_imagenet_subset_{ds_indices[0]}_to_{ds_indices[1]}",
+        dataset_indices=ds_indices)
+    run_experiment(config=config)
+
+
 if __name__ == '__main__':
     # set logging level to info
     logging.basicConfig(level=logging.INFO)
-    # run_grayscale_duplicated_coco()
-    ds_indices = (0, 2500)
-    # ds_indices = (2500, 5000)
-    # ds_indices = (5000, 7500)
-    # ds_indices = (7500, 10000)
-    config = ImageNetSubsetConfig(save_dir=f"{setup_config['OUTPUT_ROOT']}/results_imagenet_subset_{ds_indices[0]}_to_{ds_indices[1]}",
-                                  dataset_indices=ds_indices)
-    ds = get_ds(config)
-    run_experiment(config=config)
+
