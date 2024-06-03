@@ -14,8 +14,8 @@ docker run --gpus all -it -v $(pwd):/storage/malnick/ shimonmal/torch:fpi
 
 On runai:
 ```shell
-runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi
-runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm --interactive -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi --command -- sleep infinity
+runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi -e HF_HOME=/storage/malnick/huggingface_cache
+runai submit --name shimon-fpi -g 1.0 -i shimonmal/torch:fpi --pvc=storage:/storage --large-shm --interactive -e DATASETS_ROOT=/storage/malnick -e OUTPUT_ROOT=/storage/malnick/results_fpi -e HF_HOME=/storage/malnick/huggingface_cache --command -- sleep infinity
 ```
 
 # useful commands
