@@ -50,3 +50,11 @@ class NormalDistributedDatasetConfig(BaseConfig):
     images_shape: Tuple[int] = (3, 512, 512)
 
 
+@dataclass
+class NoisedCocoCaptions17Config(BaseConfig):
+    save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_coco_noised")
+    num_images_before_noise: int = 100
+    num_noise_levels: int = 30
+    noise_multiplier: float = 6.0
+
+

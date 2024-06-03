@@ -111,6 +111,28 @@ class ChestXRay(Dataset):
         return len(self.images)
 
 
+class NoisedCocoCaptions17(CocoCaptions17):
+    def __init__(self, num_images_before_noise, num_noise_levels, noise_multiplier, root=datasets_paths["COCO_ROOT"], transform=None):
+        super().__init__(root, transform)
+        self.num_images_before_noise = num_images_before_noise
+        self.num_noise_levels = num_noise_levels
+        self.len = num_images_before_noise * num_noise_levels
+        self.generator = torch.Generator()
+        self.noise_multiplier = noise_multiplier
+
+    def get_consistent_noise(self, idx, cur_noise_level, shape):
+        self.generator.manual_seed(idx * cur_noise_level)
+        return torch.randn(shape, generator=self.generator) * self.noise_multiplier *\
+            (cur_noise_level + 1) / self.num_noise_levels
+
+    def _get_single_item(self, item):
+        correct_idx = item // self.num_noise_levels
+        image, caption = super()._get_single_item(correct_idx)
+        noise = self.get_consistent_noise(correct_idx, item % self.num_noise_levels, image.shape)
+        noise_image = torch.clamp(image + noise, 0, 1)
+        return noise_image, caption
+
+
 class NormalDistributedDataset(Dataset):
     def __init__(self, ds_size=500, images_shape=(3, 512, 512), transform=None):
         self.ds_size = ds_size
