@@ -8,7 +8,7 @@ import sys
 
 from PIL import Image
 from matplotlib import pyplot as plt
-from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset
+from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17
 import os
 import torch
 from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
@@ -21,7 +21,8 @@ from time import time
 from setup import setup_config
 from datasets import ImageNetSubset
 from torch.utils.data import DataLoader, Subset
-from configs import BaseConfig, CocoConfig, ChestXRayConfig, ImageNetSubsetConfig, NormalDistributedDatasetConfig
+from configs import BaseConfig, CocoConfig, ChestXRayConfig, ImageNetSubsetConfig, NormalDistributedDatasetConfig, \
+    NoisedCocoCaptions17Config
 from torchvision import transforms
 
 
@@ -97,6 +98,9 @@ def get_ds(config: BaseConfig):
     elif isinstance(config, ImageNetSubsetConfig):
         ds = ImageNetSubset(split=config.split, num_classes=config.num_classes,
                             num_images_per_class=config.num_images_per_class, transform=config.transform)
+    elif isinstance(config, NoisedCocoCaptions17Config):
+        ds = NoisedCocoCaptions17(transform=config.transform, num_images_before_noise=config.num_images_before_noise,
+                                  num_noise_levels=config.num_noise_levels, noise_multiplier=config.noise_multiplier)
     else:
         raise NotImplementedError(f"Dataset type is not supported")
     return ds
@@ -222,7 +226,23 @@ def run_imagenet_on_different_devices(num_images=10000, num_devices=4):
     run_experiment(config=config)
 
 
+def plot_noisy_coco_images(num_images=10, images_per_row=5, save_dir=None):
+    if save_dir is None:
+        save_dir = f"{setup_config['OUTPUT_ROOT']}/results_coco_noised/images"
+        os.makedirs(save_dir, exist_ok=True)
+    config = NoisedCocoCaptions17Config()
+    ds = get_ds(config)
+    for i in range(num_images):
+        num_noise_levels = config.num_noise_levels
+        plot_images([ds[(i * num_noise_levels) + j][0] for j in range(num_noise_levels)],
+                    num_rows=num_noise_levels // images_per_row, num_cols=images_per_row,
+                    titles=[f"Var = {i + 1}" for i in range(num_noise_levels)], show_fig=False,
+                    save_fig_path=f"{save_dir}/grid_{i}.png")
+
+
 if __name__ == '__main__':
     # set logging level to info
+    torch.manual_seed(8888)
     logging.basicConfig(level=logging.INFO)
-
+    config = NoisedCocoCaptions17Config(save_dir=f"{setup_config['OUTPUT_ROOT']}/results_coco_noised")
+    run_experiment(config=config, save_images=True)
