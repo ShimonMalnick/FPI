@@ -72,7 +72,8 @@ def view_images(images, num_rows=1, offset_ratio=0.02, title=None):
 def plot_images(images, num_rows, num_cols, titles=None, save_fig_path=None, show_fig=True):
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 2, num_rows * 2))
     axes = axes.flatten()
-
+    if titles is None:
+        titles = [None] * len(images)
     for i, (image, title) in enumerate(zip(images, titles)):
         if type(image) is torch.Tensor:
             image = image.cpu().permute(1, 2, 0).numpy()
