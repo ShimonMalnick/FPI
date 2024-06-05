@@ -1,15 +1,15 @@
 import numbers
 import os
 from abc import abstractmethod
-from dataclasses import dataclass
-from typing import Tuple, Optional, Callable, Sequence, Union
+from dataclasses import dataclass, field
+from typing import Tuple, Optional, Callable, Sequence, Union, List
 from torchvision.transforms.v2 import ScaleJitter, RandomCrop, RandomAffine, RandomPerspective, \
     RandomVerticalFlip, RandomChannelPermutation, RandomPhotometricDistort, GaussianBlur
 
 
 @dataclass
-class BaseConfig:
-    batch_size: int = 16
+class BaseDatasetConfig:
+    batch_size: int = 32
     num_ddim_steps: int = 10
     middle_latent_step: int = 4
     num_iter_fixed_point: int = 5
@@ -27,35 +27,34 @@ class BaseConfig:
 
 
 @dataclass
-class CocoConfig(BaseConfig):
+class CocoDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_coco")
     dataset_indices = (0, 500)
 
 
 @dataclass
-class ChestXRayConfig(BaseConfig):
+class ChestXRayDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_chest_xray")
     dataset_indices = (0, 500)
 
 
 @dataclass
-class ImageNetSubsetConfig(BaseConfig):
+class ImageNetSubsetDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_imagenet_subset")
     split: str = 'train'
     num_classes: int = 100
     num_images_per_class: int = 100
-    batch_size: int = 4
 
 
 @dataclass
-class NormalDistributedDatasetConfig(BaseConfig):
+class NormalDistributedDatasetDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_normal_distributed_dataset")
     ds_size: int = 500
     images_shape: Tuple[int] = (3, 512, 512)
 
 
 @dataclass
-class NoisedCocoCaptions17Config(BaseConfig):
+class NoisedCocoCaptions17DatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_coco_noised")
     num_images_before_noise: int = 100
     num_noise_levels: int = 30
@@ -66,10 +65,6 @@ class NoisedCocoCaptions17Config(BaseConfig):
 class AugmentationConfig:
     augmentation_func: Callable
 
-    @abstractmethod
-    def __str__(self):
-        raise NotImplementedError
-
 
 @dataclass
 class ScaleJitterConfig(AugmentationConfig):
@@ -79,14 +74,6 @@ class ScaleJitterConfig(AugmentationConfig):
 
     def __str__(self):
         return f"ScaleJitter(target_size={self.target_size}, scale_range={self.scale_range})"
-
-
-@dataclass
-class IdentityConfig(AugmentationConfig):
-    augmentation_func: Callable = lambda x: x
-
-    def __str__(self):
-        return "Identity"
 
 
 @dataclass
@@ -131,6 +118,7 @@ class RandomChannelPermutationConfig(AugmentationConfig):
     def __str__(self):
         return "RandomChannelPermutation"
 
+
 @dataclass
 class RandomPhotometricDistortConfig(AugmentationConfig):
     augmentation_func: Callable = RandomPhotometricDistort
@@ -141,8 +129,40 @@ class RandomPhotometricDistortConfig(AugmentationConfig):
 
 @dataclass
 class GaussianBlurConfig(AugmentationConfig):
-    kernel_size: Union[int, Sequence[int]] = 32
+    kernel_size: Union[int, Sequence[int]] = 25
     augmentation_func: Callable = GaussianBlur
 
     def __str__(self):
         return f"GaussianBlur(kernel_size={self.kernel_size})"
+
+
+@dataclass
+class IdentityConfig(AugmentationConfig):
+    augmentation_func: Callable = lambda **kwargs: lambda x: x
+
+    def __str__(self):
+        return "Identity"
+
+
+@dataclass
+class AugmentedDatasetConfig(BaseDatasetConfig):
+    dataset_config: BaseDatasetConfig = None
+    save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_augmented")
+    augmentations: List[AugmentationConfig] = field(
+        default_factory=lambda: [ScaleJitterConfig(), RandomCropConfig(), RandomAffineConfig(),
+                                 RandomPerspectiveConfig(),
+                                 RandomVerticalFlipConfig(), RandomChannelPermutationConfig(),
+                                 RandomPhotometricDistortConfig(),
+                                 GaussianBlurConfig()])
+    augmentation_config: Optional[Callable] = None
+
+    @abstractmethod
+    def __str__(self):
+        raise NotImplementedError
+
+    def to_dict(self):
+        d = super().to_dict()
+        d['augmentations'] = [str(aug) for aug in self.augmentations]
+        d['dataset_config'] = self.dataset_config.to_dict()
+        d['dataset_config']['name'] = type(self.dataset_config).__name__
+        return d
