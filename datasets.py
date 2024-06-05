@@ -116,18 +116,18 @@ class AugmentedDataset(Dataset):
     def __init__(self, augmentations: List[AugmentationConfig], dataset: Dataset, transform=None):
         self.dataset = dataset
         if transform is None:
-            self.transform = get_default_transform()
+            self.transform = transforms.Resize((512, 512))
         else:
             self.transform = transform
-        self.augmentations = self.create_augmentations_list([str(IdentityConfig), IdentityConfig()] + augmentations)
+        self.augmentations = self.create_augmentations_list([IdentityConfig()] + augmentations)
         self.number_of_augmentations = len(augmentations)
         self.len = len(self.dataset) * self.number_of_augmentations
 
     def __getitem__(self, item):
         correct_idx = item // self.number_of_augmentations
-        image, caption = super().__getitem__(correct_idx)
+        image, caption = self.dataset[correct_idx]
         augmentation_name, augmentation = self.augmentations[item % self.number_of_augmentations]
-        return augmentation(image), augmentation_name
+        return self.transform(augmentation(image)), augmentation_name
 
     def __len__(self):
         return self.len
@@ -144,7 +144,8 @@ class AugmentedDataset(Dataset):
 
 
 class NoisedCocoCaptions17(CocoCaptions17):
-    def __init__(self, num_images_before_noise, num_noise_levels, noise_multiplier, root=datasets_paths["COCO_ROOT"], transform=None):
+    def __init__(self, num_images_before_noise, num_noise_levels, noise_multiplier, root=datasets_paths["COCO_ROOT"],
+                 transform=None):
         super().__init__(root, transform)
         self.num_images_before_noise = num_images_before_noise
         self.num_noise_levels = num_noise_levels
@@ -154,7 +155,7 @@ class NoisedCocoCaptions17(CocoCaptions17):
 
     def get_consistent_noise(self, idx, cur_noise_level, shape):
         self.generator.manual_seed(idx * cur_noise_level)
-        return torch.randn(shape, generator=self.generator) * self.noise_multiplier *\
+        return torch.randn(shape, generator=self.generator) * self.noise_multiplier * \
             (cur_noise_level + 1) / self.num_noise_levels
 
     def _get_single_item(self, item):
