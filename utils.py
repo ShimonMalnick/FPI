@@ -19,16 +19,23 @@ def compute_likelihood_to_bpd(likelihood: Union[torch.Tensor, float], num_pixels
     return (nll / num_pixels) / np.log(2)
 
 
-def latent_to_bpd(latent: torch.FloatTensor):
+def latent_to_bpd(latent: torch.FloatTensor, compute_batch: bool = False):
     """
     Compute the bits per dimension of a latent variable, w.r.t to the standard normal distribution
+    :param compute_batch: whether to compute the bpd for a batch of latent variables
     :param latent: The latent varibale
     :return: the bits per dimension
     """
     standard_normal = Normal(0, 1)
-    likelihood = standard_normal.log_prob(latent.detach().cpu()).sum()
+    if compute_batch:
+        assert latent.ndim > 1, "Latent must be a batch of latent variables"
+        likelihood = standard_normal.log_prob(latent.cpu()).sum(dim=tuple(range(1, latent.dim())))
+        n_element = latent[0].nelement()
+    else:
+        likelihood = standard_normal.log_prob(latent.detach().cpu()).sum()
+        n_element = latent.nelement()
     nll = -1 * likelihood
-    return (nll / latent.nelement()) / np.log(2)
+    return (nll / n_element) / np.log(2)
 
 
 def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None):
