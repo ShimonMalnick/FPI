@@ -8,7 +8,7 @@ import sys
 
 from PIL import Image
 from matplotlib import pyplot as plt
-from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17
+from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17, AugmentedDataset
 import os
 import torch
 from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
@@ -21,8 +21,8 @@ from time import time
 from setup import setup_config
 from datasets import ImageNetSubset
 from torch.utils.data import DataLoader, Subset
-from configs import BaseConfig, CocoConfig, ChestXRayConfig, ImageNetSubsetConfig, NormalDistributedDatasetConfig, \
-    NoisedCocoCaptions17Config
+from configs import BaseDatasetConfig, CocoDatasetConfig, ChestXRayDatasetConfig, ImageNetSubsetDatasetConfig, \
+    NormalDistributedDatasetDatasetConfig, NoisedCocoCaptions17DatasetConfig, AugmentedDatasetConfig
 from torchvision import transforms
 
 
@@ -43,12 +43,9 @@ def get_all_latents(guidance_scale, caption, images, middle_latent_step, num_ddi
 
 
 @torch.no_grad()
-def run_experiment(config: BaseConfig, save_images=False, timeit=False):
+def run_experiment(config: BaseDatasetConfig, save_images=False, timeit=False):
     ds = get_ds(config)
     os.makedirs(config.save_dir, exist_ok=True)
-
-    if config.dataset_indices is not None:
-        ds = Subset(ds, range(*config.dataset_indices))
 
     print(f"Saving results to {config.save_dir}")
     os.makedirs(config.save_dir, exist_ok=True)
@@ -75,7 +72,7 @@ def run_experiment(config: BaseConfig, save_images=False, timeit=False):
         output = create_output_dict(config, halfway_latent, halfway_result_latent,
                                     original_results_latent, standard_normal)
 
-        if isinstance(config, ImageNetSubsetConfig):
+        if isinstance(config, ImageNetSubsetDatasetConfig):
             output['class'] = batch[1]
 
         if save_images:
@@ -88,21 +85,29 @@ def run_experiment(config: BaseConfig, save_images=False, timeit=False):
         torch.save(output, os.path.join(config.save_dir, f"batch_{i}.pt"))
 
 
-def get_ds(config: BaseConfig):
-    if isinstance(config, CocoConfig):
+def get_ds(config: BaseDatasetConfig):
+    if isinstance(config, CocoDatasetConfig):
         ds = CocoCaptions17(transform=config.transform)
-    elif isinstance(config, ChestXRayConfig):
+    elif isinstance(config, ChestXRayDatasetConfig):
         ds = ChestXRay(transform=config.transform)
-    elif isinstance(config, NormalDistributedDatasetConfig):
+    elif isinstance(config, NormalDistributedDatasetDatasetConfig):
         ds = NormalDistributedDataset(ds_size=config.ds_size, transform=config.transform)
-    elif isinstance(config, ImageNetSubsetConfig):
+    elif isinstance(config, ImageNetSubsetDatasetConfig):
         ds = ImageNetSubset(split=config.split, num_classes=config.num_classes,
                             num_images_per_class=config.num_images_per_class, transform=config.transform)
-    elif isinstance(config, NoisedCocoCaptions17Config):
+    elif isinstance(config, NoisedCocoCaptions17DatasetConfig):
         ds = NoisedCocoCaptions17(transform=config.transform, num_images_before_noise=config.num_images_before_noise,
                                   num_noise_levels=config.num_noise_levels, noise_multiplier=config.noise_multiplier)
+    elif isinstance(config, AugmentedDatasetConfig):
+        ds_config = config.dataset_config
+        assert not isinstance(ds_config, AugmentedDatasetConfig)
+        inner_ds = get_ds(ds_config)
+        ds = AugmentedDataset(augmentations=config.augmentations, dataset=inner_ds, transform=config.transform)
     else:
         raise NotImplementedError(f"Dataset type is not supported")
+
+    if config.dataset_indices is not None:
+        ds = Subset(ds, range(*config.dataset_indices))
     return ds
 
 
@@ -123,7 +128,7 @@ def get_pipelines(device: torch.device):
     return inversion_pipe, img2img_pipe
 
 
-def create_output_dict(config: BaseConfig, halfway_latent, halfway_result_latent, original_results_latent,
+def create_output_dict(config: BaseDatasetConfig, halfway_latent, halfway_result_latent, original_results_latent,
                        standard_normal):
     # we examine the latents log-likelihood compared to standard normal distribution R.V,
     # as this is the distribution used for latent diffusion model
@@ -213,14 +218,14 @@ def run_grayscale_duplicated_coco(output_path=None):
         output_path = f"{setup_config['OUTPUT_ROOT']}/results_grayscale_coco"
     transform = transforms.Compose([lambda image: Image.open(image).convert('L').resize((512, 512)).convert('RGB'),
                                     transforms.ToTensor()])
-    config = CocoConfig(save_dir=output_path, transform=transform)
+    config = CocoDatasetConfig(save_dir=output_path, transform=transform)
     run_experiment(config)
 
 
 def run_imagenet_on_different_devices(num_images=10000, num_devices=4):
     cur_idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     ds_indices = (cur_idx * num_images // num_devices, (cur_idx + 1) * num_images // num_devices)
-    config = ImageNetSubsetConfig(
+    config = ImageNetSubsetDatasetConfig(
         save_dir=f"{setup_config['OUTPUT_ROOT']}/results_imagenet_subset_{ds_indices[0]}_to_{ds_indices[1]}",
         dataset_indices=ds_indices)
     run_experiment(config=config)
@@ -230,7 +235,7 @@ def plot_noisy_coco_images(num_images=10, images_per_row=5, save_dir=None):
     if save_dir is None:
         save_dir = f"{setup_config['OUTPUT_ROOT']}/results_coco_noised/images"
         os.makedirs(save_dir, exist_ok=True)
-    config = NoisedCocoCaptions17Config()
+    config = NoisedCocoCaptions17DatasetConfig()
     ds = get_ds(config)
     for i in range(num_images):
         num_noise_levels = config.num_noise_levels
@@ -240,9 +245,15 @@ def plot_noisy_coco_images(num_images=10, images_per_row=5, save_dir=None):
                     save_fig_path=f"{save_dir}/grid_{i}.png")
 
 
+def run_augmented_dataset():
+    inner_config = NoisedCocoCaptions17DatasetConfig(save_dir=None, dataset_indices=(0, 100))
+    config = AugmentedDatasetConfig(dataset_config=inner_config,
+                                    save_dir=f"{setup_config['OUTPUT_ROOT']}/results_augmented")
+    run_experiment(config=config, save_images=True)
+
+
 if __name__ == '__main__':
     # set logging level to info
     torch.manual_seed(8888)
     logging.basicConfig(level=logging.INFO)
-    config = NoisedCocoCaptions17Config(save_dir=f"{setup_config['OUTPUT_ROOT']}/results_coco_noised")
-    run_experiment(config=config, save_images=True)
+
