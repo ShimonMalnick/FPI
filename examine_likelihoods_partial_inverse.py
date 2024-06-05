@@ -252,8 +252,49 @@ def run_augmented_dataset():
     run_experiment(config=config, save_images=True)
 
 
+def create_imagenet_plot(base_dir="/home/shimon/research/diffusion_inversions/results/results_imagenet",
+                         save_path='/home/shimon/research/diffusion_inversions/results/results_imagenet/bpd_hist.png',
+                         num_class_to_show=None):
+    cache_file_path = f"{base_dir}/labels2bpds.pt"
+    if not os.path.isfile(cache_file_path):
+        subsets_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+        all_paths = [os.path.join(base_dir, sub, p) for sub in subsets_dirs for p in
+                     os.listdir(os.path.join(base_dir, sub))]
+        config = torch.load(all_paths[0])['config']
+        ds = get_ds(ImageNetSubsetDatasetConfig(num_classes=config['num_classes'], num_images_per_class=config['num_images_per_class']))
+        idx_to_class = {v: k for k, v in ds.class_to_idx.items()}
+        labels2bpds = {}
+        for path in all_paths:
+            data = torch.load(path)
+            cur_batch_labels = data['class'].tolist()
+            for label in cur_batch_labels:
+                if label not in labels2bpds:
+                    labels2bpds[label] = []
+                labels2bpds[label].append(latent_to_bpd(data['original_latent']))
+        labels2bpds = {(k, idx_to_class[k]): v for k, v in labels2bpds.items()}
+        torch.save(labels2bpds, cache_file_path)
+    else:
+        labels2bpds = torch.load(cache_file_path)
+
+    labels2bpds = {k: v for k, v in list(labels2bpds.items())}
+    if num_class_to_show is not None:
+        labels2bpds = {k: v for k, v in list(labels2bpds.items())[:num_class_to_show]}
+
+    plt.clf()
+    plt.figure(figsize=(10, 10))
+    for label, label_name in labels2bpds.keys():
+        plt.hist(labels2bpds[label, label_name], label=label_name, bins=10)
+    plt.legend(loc='upper right')
+    plt.xlabel("BPD")
+    plt.ylabel("Count")
+    if save_path:
+        plt.savefig(save_path)
+    plt.show()
+    plt.close()
+    return labels2bpds
+
+
 if __name__ == '__main__':
     # set logging level to info
     torch.manual_seed(8888)
     logging.basicConfig(level=logging.INFO)
-
