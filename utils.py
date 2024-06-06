@@ -1,5 +1,7 @@
+import re
+
 import math
-from typing import Union, Dict
+from typing import Union, Dict, Callable
 import torch
 import numpy as np
 from diffusers import DDIMScheduler
@@ -19,7 +21,7 @@ def compute_likelihood_to_bpd(likelihood: Union[torch.Tensor, float], num_pixels
     return (nll / num_pixels) / np.log(2)
 
 
-def latent_to_bpd(latent: torch.FloatTensor, compute_batch: bool = False):
+def latent_to_bpd(latent: torch.FloatTensor, compute_batch: bool = True):
     """
     Compute the bits per dimension of a latent variable, w.r.t to the standard normal distribution
     :param compute_batch: whether to compute the bpd for a batch of latent variables
@@ -54,26 +56,37 @@ def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None):
     return image
 
 
-def plot_bpd_histogram(data: Dict, save_path=None, show_fig=True, n_bins=None):
+def plot_bpd_histogram(data: Dict, save_path=None, show_fig=True, n_bins=None, **kwargs):
     """
     Plot the BPD of the given data. the data is expected as a dictionary of the form {label: array of bpd values}
     :param data: the data to plot
     :param save_path: the path to save the plot, leave None to not save
     :param show_fig: whether to show the figure
-    :param n_bins: the number of bins to use in the histogram. if left blank, the maximal square root of the number of
-    values in each data sample
+    :param n_bins: the number of bins to use in the histogram.
     """
     plt.clf()
     plt.figure(figsize=(10, 10))
-    if n_bins is None:
-        n_bins = max([math.sqrt(len(v)) for v in data.values()])
-    for label, values in data.values():
-        plt.hist(values, label=label, bins=n_bins)
+    for label, values in data.items():
+        plt.hist(values, label=label, bins=n_bins, alpha=0.5)
     plt.legend(loc='upper right')
     plt.xlabel("BPD")
     plt.ylabel("Count")
+    if 'title' in kwargs and kwargs['title']:
+        plt.title(kwargs['title'])
     if save_path:
         plt.savefig(save_path)
     if show_fig:
         plt.show()
     plt.close()
+
+
+def sort_key_func_by_ordered_file_names(pattern_prefix: str) -> Callable[[str], int]:
+    """
+    Create a sorting key function that sorts by the number in the file name
+    :param pattern_prefix:  the prefix of the pattern to match, right before the number. for example if the file name is
+    "file_12.txt" and the pattern_prefix is "file_", the function will return 12
+    :return: the sorting key function
+    """
+    return lambda s: int(re.match(f".*{pattern_prefix}(\d+).*", s).group(1))
+
+
