@@ -9,7 +9,8 @@ from torchvision.transforms.v2 import ScaleJitter, RandomCrop, RandomAffine, Ran
 
 @dataclass
 class BaseDatasetConfig:
-    batch_size: int = 32
+    # currently batch_size=16 runs on RUN:AI with A5000
+    batch_size: int = 16
     num_ddim_steps: int = 10
     middle_latent_step: int = 4
     num_iter_fixed_point: int = 5
@@ -23,19 +24,20 @@ class BaseDatasetConfig:
         d = self.__dict__.copy()
         # popping un hashable values
         d.pop('transform')
+        d['name'] = type(self).__name__
         return d
 
 
 @dataclass
 class CocoDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_coco")
-    dataset_indices = (0, 500)
+    dataset_indices: Optional[Tuple[int, int]] = (0, 500)
 
 
 @dataclass
 class ChestXRayDatasetConfig(BaseDatasetConfig):
     save_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "results_chest_xray")
-    dataset_indices = (0, 500)
+    dataset_indices: Optional[Tuple[int, int]] = (0, 500)
 
 
 @dataclass
