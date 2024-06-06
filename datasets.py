@@ -171,16 +171,17 @@ class NormalDistributedDataset(Dataset):
         self.ds_size = ds_size
         self.data = torch.randn(ds_size, *images_shape)
         self.static_caption = "A random noise image"
-        if transform is None:
-            self.transform = transforms.ToTensor()
-        else:
-            self.transform = transform
+        self.transform = transform
 
     def __len__(self):
         return self.ds_size
 
     def __getitem__(self, item):
-        return self.transform(self.data[item]), self.static_caption
+        item = self.data[item]
+        if self.transform is not None:
+            item = self.transform(item)
+
+        return item, self.static_caption
 
 
 class FolderDataset(Dataset):
