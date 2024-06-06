@@ -5,9 +5,13 @@ For example, the first experiment is to run FPI for 50 steps and store the laten
 run the entire process again on this latent, and compare its difference from the result in the original run.
 """
 import sys
+from glob import glob
+from typing import Union, List, Tuple
 
+import math
 from PIL import Image
-from matplotlib import pyplot as plt
+from easydict import EasyDict
+
 from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17, AugmentedDataset
 import os
 import torch
@@ -15,7 +19,7 @@ from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
 from inversion import MyInvertFixedPoint
 from torch.distributions import Normal
 import logging
-from utils import latent_to_bpd, latent_to_image
+from utils import latent_to_bpd, latent_to_image, plot_bpd_histogram, sort_key_func_by_ordered_file_names
 from p2p.ptp_utils import plot_images
 from time import time
 from setup import setup_config
@@ -146,7 +150,7 @@ def create_output_dict(config: BaseDatasetConfig, halfway_latent, halfway_result
     return output
 
 
-def plot_bpd_histograms(experiment_dir, n_samples_per_data=50, save_path=None):
+def plot_bpd_histograms_halfway_latents(experiment_dir, n_samples_per_data=50, save_path=None):
     files = os.listdir(experiment_dir)
     original_latents = [torch.load(os.path.join(experiment_dir, f))['original_latent'] for f in files][
                        :n_samples_per_data]
@@ -163,14 +167,7 @@ def plot_bpd_histograms(experiment_dir, n_samples_per_data=50, save_path=None):
         data.append([latent_to_bpd(latent) for latent in latents])
         names.append(name)
     assert all([len(a) == n_samples_per_data for a in data])
-    plt.clf()
-    plt.hist(data, label=names)
-    plt.legend()
-    plt.xlabel("BPD")
-    plt.ylabel("Count")
-    if save_path:
-        plt.savefig(save_path)
-    plt.show()
+    plot_bpd_histogram({d: n for d, n in zip(data, names)}, save_path=save_path)
 
 
 def save_latents_images(exp_dir, num_images, num_ddim_steps=10, save_path="results_partial_inverse/coco/images"):
@@ -231,18 +228,27 @@ def run_imagenet_on_different_devices(num_images=10000, num_devices=4):
     run_experiment(config=config)
 
 
-def plot_noisy_coco_images(num_images=10, images_per_row=5, save_dir=None):
-    if save_dir is None:
+def plot_noisy_coco_images(num_images=10, images_per_row=5, save_dir=None, titles=None, show_fig=False,
+                           num_noise_levels=None, save_path=None, coco_ds_images_indices=None):
+    if save_dir is None and save_path is None:
         save_dir = f"{setup_config['OUTPUT_ROOT']}/results_coco_noised/images"
         os.makedirs(save_dir, exist_ok=True)
+    if save_path:
+        assert num_images == 1, "save_path is only supported for a single image, otherwise it will be overwritten"
     config = NoisedCocoCaptions17DatasetConfig()
     ds = get_ds(config)
-    for i in range(num_images):
+    if num_noise_levels is None:
         num_noise_levels = config.num_noise_levels
+    if titles is None:
+        titles = [f"Var = {j + 1}" for j in range(num_noise_levels)]
+    indices = coco_ds_images_indices if coco_ds_images_indices is not None else range(num_images)
+    for i in indices:
+        if not save_path:
+            save_path = f"{save_dir}/grid_{i}.png" if save_dir else None
         plot_images([ds[(i * num_noise_levels) + j][0] for j in range(num_noise_levels)],
                     num_rows=num_noise_levels // images_per_row, num_cols=images_per_row,
-                    titles=[f"Var = {i + 1}" for i in range(num_noise_levels)], show_fig=False,
-                    save_fig_path=f"{save_dir}/grid_{i}.png")
+                    titles=titles, show_fig=show_fig,
+                    save_fig_path=save_path)
 
 
 def run_augmented_dataset():
@@ -261,7 +267,8 @@ def create_imagenet_plot(base_dir="/home/shimon/research/diffusion_inversions/re
         all_paths = [os.path.join(base_dir, sub, p) for sub in subsets_dirs for p in
                      os.listdir(os.path.join(base_dir, sub))]
         config = torch.load(all_paths[0])['config']
-        ds = get_ds(ImageNetSubsetDatasetConfig(num_classes=config['num_classes'], num_images_per_class=config['num_images_per_class']))
+        ds = get_ds(ImageNetSubsetDatasetConfig(num_classes=config['num_classes'],
+                                                num_images_per_class=config['num_images_per_class']))
         idx_to_class = {v: k for k, v in ds.class_to_idx.items()}
         labels2bpds = {}
         for path in all_paths:
@@ -270,7 +277,8 @@ def create_imagenet_plot(base_dir="/home/shimon/research/diffusion_inversions/re
             for label in cur_batch_labels:
                 if label not in labels2bpds:
                     labels2bpds[label] = []
-                labels2bpds[label].append(latent_to_bpd(data['original_latent']))
+                # here we append the bpd of the original latent of each entry in the batch, one by one
+                labels2bpds[label].append(latent_to_bpd(data['original_latent'], compute_batch=False))
         labels2bpds = {(k, idx_to_class[k]): v for k, v in labels2bpds.items()}
         torch.save(labels2bpds, cache_file_path)
     else:
@@ -280,18 +288,84 @@ def create_imagenet_plot(base_dir="/home/shimon/research/diffusion_inversions/re
     if num_class_to_show is not None:
         labels2bpds = {k: v for k, v in list(labels2bpds.items())[:num_class_to_show]}
 
-    plt.clf()
-    plt.figure(figsize=(10, 10))
-    for label, label_name in labels2bpds.keys():
-        plt.hist(labels2bpds[label, label_name], label=label_name, bins=10)
-    plt.legend(loc='upper right')
-    plt.xlabel("BPD")
-    plt.ylabel("Count")
-    if save_path:
-        plt.savefig(save_path)
-    plt.show()
-    plt.close()
+    # remove the label number from the dict keys
+    labels2bpds = {k[1]: torch.stack(v) for k, v in labels2bpds.items()}
+    plot_bpd_histogram(labels2bpds, save_path=save_path)
+
     return labels2bpds
+
+
+def plot_multiple_sources_bpd_histogram(data_base_dirs: List[Union[str, Tuple[str, str]]], save_path: str = None,
+                                        n_samples: int = 500, **kwargs):
+    """
+    Plot the BPD histograms of the given data.
+    :param data_base_dirs: the data is expected as a list of either:
+     1. directories, each containing the path to the directory containing results of the experiment
+     2. tuples of (directories, labels), where directories is the same as in 1, and labels is the label to give to the
+        data in the plot
+    :param save_path: the path to save the plot, leave None to not save
+    :param n_samples: the number of samples to take from each data directory. make sure that each directory contains
+    at least n_samples samples
+    """
+    plot_data = {}
+    assert data_base_dirs, "data_base_dirs is empty"
+    if isinstance(data_base_dirs[0], str):
+        names = data_base_dirs
+    elif isinstance(data_base_dirs[0], tuple):
+        names = [n for _, n in data_base_dirs]
+        data_base_dirs = [d for d, _ in data_base_dirs]
+    else:
+        raise ValueError(f"Invalid data_base_dirs type: {type(data_base_dirs[0])}")
+    for d, name in zip(data_base_dirs, names):
+        cur_samples = [torch.load(p) for p in glob(f"{d}/batch_*.pt")]
+        cur_bpds = torch.cat([latent_to_bpd(s['original_latent'], compute_batch=True) for s in cur_samples])
+        assert cur_bpds.ndim == 1 and cur_bpds.nelement() >= n_samples, f"cur_bpds shape is {cur_bpds.shape} and " \
+                                                                        f"n_samples is {n_samples}"
+        cur_bpds = cur_bpds[:n_samples]
+        plot_data[name] = cur_bpds
+    plot_bpd_histogram(plot_data, save_path=save_path, **kwargs)
+
+
+def plot_bpd_coco_noised_images(
+        base_dir_noised="/home/shimon/research/diffusion_inversions/results/results_coco_noised",
+        save_path="/home/shimon/research/diffusion_inversions/results/coco_noised_bpd_hist.png",
+        use_only_every_nth_noise=None):
+    all_batches_noised = glob(f"{base_dir_noised}/batch_*.pt")
+    sorted_batches_paths = sorted(all_batches_noised, key=sort_key_func_by_ordered_file_names("batch_"))
+    sorted_batches = [torch.load(p) for p in sorted_batches_paths]
+    config = EasyDict(sorted_batches[0]['config'])
+
+    # divide images according to noise_levels
+    data = {i: [] for i in range(config.num_noise_levels)}
+
+    global_idx = 0
+    for batch in sorted_batches:
+        cur_batch_bpds = latent_to_bpd(batch['original_latent'], compute_batch=True)
+        for in_batch_idx in range(cur_batch_bpds.shape[0]):
+            data[global_idx % config.num_noise_levels].append(cur_batch_bpds[in_batch_idx])
+            global_idx += 1
+
+    if use_only_every_nth_noise is not None:
+        data = {k: v for k, v in data.items() if k % use_only_every_nth_noise == 0}
+    data = {f"Var={(k + 1) * config.noise_multiplier}": v for k, v in data.items()}
+    plot_bpd_histogram(data, title='BPD histogram of noised coco images', save_path=save_path)
+
+
+def plot_noised_coco_images_with_bpd(num_images=5,
+                                     base_dir_noised="/home/shimon/research/diffusion_inversions/results/results_coco_noised",
+                                     save_dir="/home/shimon/research/diffusion_inversions/results/images_coco_noised/with_bpd"):
+    config = torch.load(f"{base_dir_noised}/batch_0.pt")['config']
+    num_noise_levels = config['num_noise_levels']
+    batch_size = config['batch_size']
+    num_batches = math.ceil((num_images * num_noise_levels) / batch_size)
+    batches_data = [torch.load(f"{base_dir_noised}/batch_{i}.pt") for i in range(num_batches)]
+    bpds = torch.cat([latent_to_bpd(b['original_latent'], compute_batch=True) for b in batches_data])
+    bpds = bpds[:num_images * num_noise_levels]
+    for i in range(num_images):
+        titles = [f"Var = {j + 1}, BPD={round(bpds[j].item(), 3)}" for j in range(num_noise_levels)]
+        bpds = bpds[num_noise_levels:]
+        plot_noisy_coco_images(num_images=1, coco_ds_images_indices=[i], titles=titles, show_fig=False,
+                               save_path=f"{save_dir}/grid_{i}.png")
 
 
 if __name__ == '__main__':
