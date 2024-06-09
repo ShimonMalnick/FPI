@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 from inversion import MyInvertFixedPoint
 from torch.distributions import Normal
 import logging
-from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, FolderDataset
+from likelihood_datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, FolderDataset
 from dataclasses import dataclass
 import shutil
 

@@ -7,23 +7,21 @@ run the entire process again on this latent, and compare its difference from the
 import sys
 from glob import glob
 from typing import Union, List, Tuple
-
 import math
 from PIL import Image
 from easydict import EasyDict
-
-from datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17, AugmentedDataset
+from likelihood_datasets import CocoCaptions17, ChestXRay, NormalDistributedDataset, NoisedCocoCaptions17, \
+    AugmentedDataset, ImageNetSubset
 import os
 import torch
-from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
+from diffusers import DDIMScheduler
 from inversion import MyInvertFixedPoint
 from torch.distributions import Normal
 import logging
-from utils import latent_to_bpd, latent_to_image, plot_bpd_histogram, sort_key_func_by_ordered_file_names
+from utils import latent_to_bpd, latent_to_image, plot_bpd_histogram, sort_key_func_by_ordered_file_names, get_pipelines
 from p2p.ptp_utils import plot_images
 from time import time
 from setup import setup_config
-from datasets import ImageNetSubset
 from torch.utils.data import DataLoader, Subset
 from configs import BaseDatasetConfig, CocoDatasetConfig, ChestXRayDatasetConfig, ImageNetSubsetDatasetConfig, \
     NormalDistributedDatasetDatasetConfig, NoisedCocoCaptions17DatasetConfig, AugmentedDatasetConfig
@@ -113,23 +111,6 @@ def get_ds(config: BaseDatasetConfig):
     if config.dataset_indices is not None:
         ds = Subset(ds, range(*config.dataset_indices))
     return ds
-
-
-def get_pipelines(device: torch.device):
-    model_id = "CompVis/stable-diffusion-v1-4"
-    inversion_pipe = MyInvertFixedPoint.from_pretrained(
-        model_id,
-        scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler", local_files_only=True),
-        local_files_only=True,
-        safety_checker=None,
-    ).to(device)
-    img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
-                                                                  scheduler=DDIMScheduler.from_pretrained(model_id,
-                                                                                                          subfolder="scheduler",
-                                                                                                          local_files_only=True),
-                                                                  local_files_only=True,
-                                                                  ).to(device)
-    return inversion_pipe, img2img_pipe
 
 
 def create_output_dict(config: BaseDatasetConfig, halfway_latent, halfway_result_latent, original_results_latent,
@@ -372,3 +353,7 @@ if __name__ == '__main__':
     # set logging level to info
     torch.manual_seed(8888)
     logging.basicConfig(level=logging.INFO)
+
+    # TODO: fix noised dataset to have the first in every series the clean image, and then the noised ones.
+    # TODO then run the experiment again and plot again (the results now are ok but we need to specifically take the
+    #  clean image from a different experiment which is bas form
