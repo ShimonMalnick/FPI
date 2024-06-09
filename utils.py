@@ -4,7 +4,7 @@ import math
 from typing import Union, Dict, Callable
 import torch
 import numpy as np
-from diffusers import DDIMScheduler
+from diffusers import DDIMScheduler, StableDiffusionImg2ImgPipeline
 from matplotlib import pyplot as plt
 from torch.distributions import Normal
 from inversion import MyInvertFixedPoint
@@ -40,8 +40,7 @@ def latent_to_bpd(latent: torch.FloatTensor, compute_batch: bool = True):
     return (nll / n_element) / np.log(2)
 
 
-def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None):
-    GUIDANCE_SCALE = 2
+def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None, guidance_scale=2):
     if pipe is None:
         model_id = "CompVis/stable-diffusion-v1-4"
         pipe = MyInvertFixedPoint.from_pretrained(
@@ -49,7 +48,7 @@ def latent_to_image(latent, num_ddim_steps=10, pipe=None, save_path=None):
             scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler"),
             safety_checker=None,
         ).to('cuda')
-    image = pipe(prompt=[""], latents=latent, guidance_scale=GUIDANCE_SCALE,
+    image = pipe(prompt=[""], latents=latent, guidance_scale=guidance_scale,
                  num_inference_steps=num_ddim_steps, output_type='pil').images[0]
     if save_path:
         image.save(save_path)
@@ -90,3 +89,17 @@ def sort_key_func_by_ordered_file_names(pattern_prefix: str) -> Callable[[str], 
     return lambda s: int(re.match(f".*{pattern_prefix}(\d+).*", s).group(1))
 
 
+def get_pipelines(device: torch.device, model_id="CompVis/stable-diffusion-v1-4"):
+    inversion_pipe = MyInvertFixedPoint.from_pretrained(
+        model_id,
+        scheduler=DDIMScheduler.from_pretrained(model_id, subfolder="scheduler", local_files_only=True),
+        local_files_only=True,
+        safety_checker=None,
+    ).to(device)
+    img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(model_id,
+                                                                  scheduler=DDIMScheduler.from_pretrained(model_id,
+                                                                                                          subfolder="scheduler",
+                                                                                                          local_files_only=True),
+                                                                  local_files_only=True,
+                                                                  ).to(device)
+    return inversion_pipe, img2img_pipe
