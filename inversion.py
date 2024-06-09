@@ -93,17 +93,17 @@ class MyInvert(StableDiffusionPipelineWithDDIMInversion):
 
     @torch.no_grad()
     def __call__(
-        self,
-        prompt: Union[str, List[str]] = None,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
-        num_inference_steps: int = 50,
-        guidance_scale: float = 7.5,
-        num_images_per_prompt: Optional[int] = 1,
-        latents: Optional[torch.FloatTensor] = None,
-        prompt_embeds: Optional[torch.FloatTensor] = None,
-        output_type: Optional[str] = "pil",
-        return_dict: bool = True,
+            self,
+            prompt: Union[str, List[str]] = None,
+            height: Optional[int] = None,
+            width: Optional[int] = None,
+            num_inference_steps: int = 50,
+            guidance_scale: float = 7.5,
+            num_images_per_prompt: Optional[int] = 1,
+            latents: Optional[torch.FloatTensor] = None,
+            prompt_embeds: Optional[torch.FloatTensor] = None,
+            output_type: Optional[str] = "pil",
+            return_dict: bool = True,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -320,8 +320,8 @@ class MyInvertOptimized(MyInvert):
         # 7. Denoising loop where we obtain the cross-attention maps.
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-
-                latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance, guidance_scale)
+                latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance,
+                                        guidance_scale)
 
                 progress_bar.update()
 
@@ -330,7 +330,8 @@ class MyInvertOptimized(MyInvert):
         return EasyDict({'latents': latents})
 
     @abstractmethod
-    def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False, guidance_scale=1.0):
+    def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False,
+                 guidance_scale=1.0):
         pass
 
 
@@ -344,8 +345,8 @@ class MyInvertFixedPoint(MyInvertOptimized):
             self,
             prompt=None,
             image=None,
-            latents = None,
-            targets = None,
+            latents=None,
+            targets=None,
             num_inference_steps: int = 50,
             guidance_scale: float = 1,
             num_images_per_prompt=1,
@@ -361,6 +362,9 @@ class MyInvertFixedPoint(MyInvertOptimized):
             batch_size = len(prompt)
         else:
             batch_size = prompt_embeds.shape[0]
+
+        if return_specific_latent is not None and isinstance(return_specific_latent, int):
+            return_specific_latent = [return_specific_latent]
 
         device = self._execution_device
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
@@ -395,9 +399,11 @@ class MyInvertFixedPoint(MyInvertOptimized):
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
 
-                latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance, guidance_scale)
-                if return_specific_latent is not None and i == return_specific_latent:
-                    specific_latent = latents.detach().clone()
+                latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance,
+                                        guidance_scale)
+                if return_specific_latent is not None and i in return_specific_latent:
+                    specific_latent = torch.cat([specific_latent,
+                                                 latents.detach().clone()]) if specific_latent is not None else latents.detach().clone()
                 progress_bar.update()
 
         latents = latents.detach().clone()
@@ -405,7 +411,8 @@ class MyInvertFixedPoint(MyInvertOptimized):
         return EasyDict({'latents': latents, 'init_latents': init_latents, "specific_latent": specific_latent})
 
     @torch.no_grad()
-    def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False, guidance_scale=1.0):
+    def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False,
+                 guidance_scale=1.0):
         latent_0 = latent.clone()
         for i in range(num_iter):
             # predict the noise residual
