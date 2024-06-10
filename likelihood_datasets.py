@@ -53,11 +53,11 @@ class ToyDataset(Dataset):
         example = {}
         image, caption = self.dataset[index % len(self.dataset)]
         example["instance_image"] = image
-        if example["instance_images"].ndim == 4:
-            assert example["instance_images"].shape[0] == 1
-            example["instance_images"] = example["instance_images"][0]
+        if example["instance_image"].ndim == 4:
+            assert example["instance_image"].shape[0] == 1
+            example["instance_image"] = example["instance_image"][0]
         example["static_intermediate_noise_preds"] = self.static_data_pool[index % len(self.static_images_path)]
-        assert example["instance_intermediate_noise_preds"].ndim == 4
+        assert example["static_intermediate_noise_preds"].ndim == 4
 
         # the used prompt is always empty
         example["instance_prompt_ids"] = self.tokenizer(
@@ -69,6 +69,12 @@ class ToyDataset(Dataset):
         ).input_ids
 
         return example
+
+    def __create_static_data_pool(self):
+        static_intermediate_noise_preds = [torch.load(self.static_images_path[i])["intermediate_noise_preds"] for i in
+                                           range(len(self.static_images_path))]
+        assert all([preds.ndim == 4 for preds in static_intermediate_noise_preds])
+        return static_intermediate_noise_preds
 
 
 class ImageNetSubset(ImageNet):
