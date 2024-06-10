@@ -395,20 +395,27 @@ class MyInvertFixedPoint(MyInvertOptimized):
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.inverse_scheduler.timesteps
         specific_latent = None
+        specific_noise_preds = None
         # 7. Denoising loop where we obtain the cross-attention maps.
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
 
-                latents = self.optimize(latents, t, prompt_embeds, num_iter, i, do_classifier_free_guidance,
-                                        guidance_scale)
+                latents, noise_preds = self.optimize(latents, t, prompt_embeds, num_iter, i,
+                                                     do_classifier_free_guidance,
+                                                     guidance_scale)
                 if return_specific_latent is not None and i in return_specific_latent:
                     specific_latent = torch.cat([specific_latent,
                                                  latents.detach().clone()]) if specific_latent is not None else latents.detach().clone()
+                    specific_noise_preds = torch.cat([specific_noise_preds,
+                                                      noise_preds.detach().clone()]) if specific_noise_preds is not None else noise_preds.detach().clone()
                 progress_bar.update()
 
         latents = latents.detach().clone()
 
-        return EasyDict({'latents': latents, 'init_latents': init_latents, "specific_latent": specific_latent})
+        return EasyDict({'latents': latents,
+                         'init_latents': init_latents,
+                         "specific_latent": specific_latent,
+                         "specific_noise_preds": specific_noise_preds})
 
     @torch.no_grad()
     def optimize(self, latent, t, prompt_embeds, num_iter, step_idx, do_classifier_free_guidance=False,
@@ -428,4 +435,7 @@ class MyInvertFixedPoint(MyInvertOptimized):
 
             latent = self.scheduler_next_step(noise_pred, t, latent_0).prev_sample
 
-        return latent
+        if num_iter > 0:
+            return latent, noise_pred
+        else:
+            return latent
