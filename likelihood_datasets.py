@@ -22,6 +22,55 @@ def get_default_transform():
         [lambda image: Image.open(image).convert('RGB').resize((512, 512)), transforms.ToTensor()])
 
 
+class ToyDataset(Dataset):
+    """
+    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
+    It pre-processes the images and the tokenizes prompts.
+    """
+
+    def __init__(
+            self,
+            static_data_root: str,
+            in_distribution_dataset: Dataset,
+            tokenizer,
+            size: int = 512,
+    ):
+        self.size = size
+        self.tokenizer = tokenizer
+        self.dataset = in_distribution_dataset
+        self.static_data_root = Path(static_data_root)
+        if not self.static_data_root.exists():
+            raise ValueError("Static data images root doesn't exists.")
+
+        self.static_images_path = list(Path(static_data_root).iterdir())
+        self._length = len(self.dataset)
+        self.static_data_pool = self.__create_static_data_pool()
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, index):
+        example = {}
+        image, caption = self.dataset[index % len(self.dataset)]
+        example["instance_image"] = image
+        if example["instance_images"].ndim == 4:
+            assert example["instance_images"].shape[0] == 1
+            example["instance_images"] = example["instance_images"][0]
+        example["static_intermediate_noise_preds"] = self.static_data_pool[index % len(self.static_images_path)]
+        assert example["instance_intermediate_noise_preds"].ndim == 4
+
+        # the used prompt is always empty
+        example["instance_prompt_ids"] = self.tokenizer(
+            "",
+            truncation=True,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids
+
+        return example
+
+
 class ImageNetSubset(ImageNet):
     def __init__(self, root: Union[str, Path] = datasets_paths['IMAGENET_ROOT'], split: str = 'train', num_classes=100,
                  num_images_per_class=100, **kwargs: Any):
