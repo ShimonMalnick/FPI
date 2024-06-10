@@ -27,5 +27,6 @@ RUN source activate fpi && pip install torch==2.2.1 torchvision==0.17.1 torchaud
 RUN source activate fpi && pip install fsspec idna importlib-metadata Jinja2 kiwisolver MarkupSafe matplotlib mpmath networkx numpy packaging pillow
 RUN source activate fpi && pip install psutil pyparsing python-dateutil PyYAML regex requests safetensors scipy six sympy tokenizers
 RUN source activate fpi && pip install tqdm triton typing_extensions urllib3 zipp easydict opencv-python
-RUN source activate fpi && pip install accelerate ipython datasets
+RUN source activate fpi && pip install accelerate ipython
+RUN source activate fpi && pip install datasets wandb
 RUN source activate fpi && pip install 'transformers @ git+https://github.com/huggingface/transformers@3ec10e6c76362191b61260300fe1d6173a8dd7e1'
