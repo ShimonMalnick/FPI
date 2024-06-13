@@ -97,7 +97,7 @@ def main(args, logger):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("null-space-pytorch", config=vars(args))
+        accelerator.init_trackers("null-space-pytorch", config=vars(args), init_kwargs={'wandb': {'name': args.run_name}})
 
 
     def save_weights(step, save_path=None):
@@ -257,6 +257,8 @@ def get_specific_attention_projections(name: str, self_attn_layer) -> List[torch
         out_layers.append(self_attn_layer.to_out)
     if len(out_layers) == 0:
         raise ValueError(f"Invalid name {name} for attention projection")
+
+    return out_layers
 
 
 def set_learnable_params(text_encoder, unet, vae, attention_trainable: str):

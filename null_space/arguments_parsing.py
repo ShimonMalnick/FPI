@@ -208,7 +208,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--logging_dir",
         type=str,
-        default=f"{out_dir}/results_null_space/logs",
+        default=None,
         help=(
             "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
@@ -268,6 +268,11 @@ def parse_args(input_args=None):
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
+
+    if args.logging_dir is None:
+        args.logging_dir = os.path.join(args.output_dir, "logs")
+
+    args.run_name = f"{args.attention_trainable}"
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
