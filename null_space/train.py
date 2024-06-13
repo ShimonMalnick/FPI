@@ -1,56 +1,37 @@
 # adapted from https://github.com/mkshing/svdiff-pytorch/blob/main/train_svdiff.py
+from typing import List
+
 import math
 import os
-from pathlib import Path
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed
 from huggingface_hub import upload_folder
-from packaging import version
-from torch.utils.data import Dataset
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel
-from diffusers import UNet2DConditionModel, DDIMInverseScheduler
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler
-)
 from arguments_parsing import parse_args
 from diffusers.optimization import get_scheduler
-from diffusers.utils import is_wandb_available
-from diffusers.utils.import_utils import is_xformers_available
 from safetensors.torch import save_file
-from hf_tools import save_model_card, configure_logging, verify_version, set_up_accelerator, create_output_dir, \
-    push_to_hub, load_tokenizer
-from likelihood_datasets import ToyDataset
-from data_tools import collate_fn, get_in_distribution_dataset
+from hf_tools import save_model_card, verify_version, setup_xformers, verify_full_precision, \
+    setup_logging_accelerator_out_dir, get_optimizer, get_train_ds_dl, setup_weight_dtype, log_initial_info, \
+    setup_resume_from_checkpoint, load_schedulers_and_models
+from data_tools import log_validation
+
+
+def learnable_parameters_key(s):
+    """
+    Using only the self-attention layers from the UNet. the key 'attn1' is used to find the self-attention layers inside
+    the model. this can be seen in the BasicTransformerBlock class implemeentaion of diffusers in the file 'attention.py'
+    located in https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention.py
+    :param s:
+    :return:
+    """
+    return "attn1" in s
 
 
 def main(args, logger):
 
-    project_dir = Path(args.output_dir, args.logging_dir)
-
-    accelerator = set_up_accelerator(args, project_dir)
-
-    if args.report_to == "wandb":
-        if not is_wandb_available():
-            raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
-        import wandb
-
-    configure_logging(accelerator, logger=logger)
-
-    # If passed along, set the training seed now.
-    if args.seed is not None:
-        set_seed(args.seed)
-
-    create_output_dir(accelerator, args)
-
-    if accelerator.is_main_process:
-        repo_id = push_to_hub(args)
-
-    tokenizer = load_tokenizer(args)
+    accelerator, repo_id, tokenizer = setup_logging_accelerator_out_dir(args, logger)
 
     inverse_scheduler, noise_scheduler, text_encoder, unet, vae = load_schedulers_and_models(args)
 
@@ -77,22 +58,7 @@ def main(args, logger):
 
     optimizer = get_optimizer(args, optim_params)
 
-    in_distribution_dataset = get_in_distribution_dataset(args.in_distribution_dataset)
-    # Dataset and DataLoaders creation:
-    train_dataset = ToyDataset(
-        static_data_root=args.static_data_dir,
-        in_distribution_dataset=in_distribution_dataset,
-        tokenizer=tokenizer,
-        size=args.resolution,
-    )
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
-        collate_fn=lambda examples: collate_fn(examples),
-        num_workers=args.dataloader_num_workers,
-    )
+    train_dataloader, train_dataset = get_train_ds_dl(args, tokenizer)
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -128,8 +94,6 @@ def main(args, logger):
     if accelerator.is_main_process:
         accelerator.init_trackers("null-space-pytorch", config=vars(args))
 
-    # cache keys to save
-    state_dict_keys = [k for k in accelerator.unwrap_model(unet).state_dict().keys() if "delta" in k]
 
     def save_weights(step, save_path=None):
         # Create the pipeline using the trained modules and save it.
@@ -138,7 +102,7 @@ def main(args, logger):
                 save_path = os.path.join(args.output_dir, f"checkpoint-{step}")
             os.makedirs(save_path, exist_ok=True)
             state_dict = accelerator.unwrap_model(unet, keep_fp32_wrapper=True).state_dict()
-            state_dict = {k: state_dict[k] for k in state_dict_keys if 'att1' in k}
+            state_dict = {k: v for k, v in state_dict.items() if v.requires_grad}
             # todo: save the relevant weights
             save_file(state_dict, os.path.join(save_path, "self-attn-null-space.safetensors"))
 
@@ -147,41 +111,13 @@ def main(args, logger):
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    log_initial_info(args, logger, total_batch_size, train_dataloader, train_dataset)
+
     global_step = 0
     first_epoch = 0
 
-    # Potentially load in the weights and states from a previous save
-    if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint != "latest":
-            path = os.path.basename(args.resume_from_checkpoint)
-        else:
-            # Get the mos recent checkpoint
-            dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
-
-        if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
-            args.resume_from_checkpoint = None
-        else:
-            accelerator.print(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
-            global_step = int(path.split("-")[1])
-
-            resume_global_step = global_step * args.gradient_accumulation_steps
-            first_epoch = global_step // num_update_steps_per_epoch
-            resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
+    first_epoch, global_step, resume_step = setup_resume_from_checkpoint(accelerator, args, first_epoch, global_step,
+                                                                         num_update_steps_per_epoch)
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, args.max_train_steps), disable=not accelerator.is_local_main_process)
@@ -281,100 +217,48 @@ def main(args, logger):
     accelerator.end_training()
 
 
-def setup_weight_dtype(accelerator, text_encoder, vae):
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
-    # unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    return weight_dtype
+def find_self_attention_helpers(module, attentions_list: List):
+    if module.__class__.__name__ == 'BasicTransformerBlock':
+        if hasattr(module, "attn1") and module.attn1 is not None:
+            attentions_list.append(module.attn1)
+    elif hasattr(module, "children"):
+        for child in module.children():
+            find_self_attention_helpers(child, attentions_list)
 
 
-def get_optimizer(args, optim_params):
-    # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
-            )
+def get_self_attention_layers(unet):
+    layers = []
+    for name, module in unet.named_children():
+        if name in ["up_blocks", "mid_blocks", "down_blocks"]:
+            find_self_attention_helpers(module, layers)
+    return layers
 
-        optimizer_class = bnb.optim.AdamW8bit
+
+def get_specific_attention_projection(name: str, self_attn_layer):
+    if name.lower() == "key":
+        return self_attn_layer.to_k
+    elif name.lower() == "value":
+        return self_attn_layer.to_v
+    elif name.lower() == "query":
+        return self_attn_layer.to_q
     else:
-        optimizer_class = torch.optim.AdamW
-    # Optimizer creation
-    optimizer = optimizer_class(
-        [{"params": optim_params}],
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-    )
-    return optimizer
-
-
-def verify_full_precision(accelerator, unet):
-    # Check that all trainable models are in full precision
-    low_precision_error_string = (
-        "Please make sure to always have all model weights in full float32 precision when starting training - even if"
-        " doing mixed precision training. copy of the weights should still be float32."
-    )
-    if accelerator.unwrap_model(unet).dtype != torch.float32:
-        raise ValueError(
-            f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
-        )
-
-
-def setup_xformers(args, logger, unet):
-    # todo: add support for xformers ( currently didn't find how to do so with torch 2.2.1, maybe upgrade to 2.3
-    if args.enable_xformers_memory_efficient_attention:
-        if is_xformers_available():
-            import xformers
-
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
+        raise ValueError(f"Invalid name {name} for attention projection")
 
 
 def set_learnable_params(text_encoder, unet, vae):
-    # We only train the additional spectral shifts
-    # todo: set params to whats relevant for me. inspect vae and see which layers are relevant. currenlty i use the
-    # 'attn1' layers from the implementation of esd for self attention layers. this must be verified and understood!
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(False)
     optim_params = []
-    for n, p in unet.named_parameters():
-        if "attn1" in n:
+
+    self_attn_layers = get_self_attention_layers(unet)
+    keys = [get_specific_attention_projection("key", layer) for layer in self_attn_layers]
+    for k in keys:
+        for n, p in k.named_parameters():
             p.requires_grad = True
             optim_params.append(p)
+
     return optim_params
-
-
-def load_schedulers_and_models(args):
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    inverse_scheduler = DDIMInverseScheduler.from_config(noise_scheduler.config)
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
-    return inverse_scheduler, noise_scheduler, text_encoder, unet, vae
 
 
 if __name__ == "__main__":
