@@ -16,11 +16,19 @@ from safetensors.torch import load_file
 from likelihood_datasets import ToyDataset
 from null_space.data_tools import get_in_distribution_dataset, collate_fn
 from transformers import CLIPTextModel
+import yaml
 from diffusers import UNet2DConditionModel, DDIMInverseScheduler
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler
 )
+
+
+def save_args_to_yaml(args, file_path):
+    with open(file_path, 'w') as file:
+        args_dict = vars(args)
+        yaml.dump(args_dict, file, default_flow_style=False)
+
 
 def save_model_card(repo_id: str, base_model=str, repo_folder=None):
     yaml = f"""

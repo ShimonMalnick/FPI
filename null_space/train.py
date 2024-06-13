@@ -1,6 +1,8 @@
 # adapted from https://github.com/mkshing/svdiff-pytorch/blob/main/train_svdiff.py
+import sys
+sys.path.append(".")
+sys.path.append("..")
 from typing import List
-
 import math
 import os
 import torch
@@ -14,8 +16,9 @@ from diffusers.optimization import get_scheduler
 from safetensors.torch import save_file
 from hf_tools import save_model_card, verify_version, setup_xformers, verify_full_precision, \
     setup_logging_accelerator_out_dir, get_optimizer, get_train_ds_dl, setup_weight_dtype, log_initial_info, \
-    setup_resume_from_checkpoint, load_schedulers_and_models
+    setup_resume_from_checkpoint, load_schedulers_and_models, save_args_to_yaml
 from data_tools import log_validation
+
 
 
 def learnable_parameters_key(s):
@@ -32,6 +35,8 @@ def learnable_parameters_key(s):
 def main(args, logger):
 
     accelerator, repo_id, tokenizer = setup_logging_accelerator_out_dir(args, logger)
+
+    save_args_to_yaml(args, f'{args.output_dir}/args.yaml')
 
     inverse_scheduler, noise_scheduler, text_encoder, unet, vae = load_schedulers_and_models(args)
 
@@ -250,7 +255,7 @@ def get_specific_attention_projections(name: str, self_attn_layer) -> List[torch
         out_layers.append(self_attn_layer.to_q)
     if "out" in name.lower():
         out_layers.append(self_attn_layer.to_out)
-    else:
+    if len(out_layers) == 0:
         raise ValueError(f"Invalid name {name} for attention projection")
 
 
