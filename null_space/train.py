@@ -35,7 +35,7 @@ def main(args, logger):
 
     inverse_scheduler, noise_scheduler, text_encoder, unet, vae = load_schedulers_and_models(args)
 
-    optim_params = set_learnable_params(text_encoder, unet, vae)
+    optim_params = set_learnable_params(text_encoder, unet, vae, args.attention_trainable)
 
     total_params = sum(p.numel() for p in optim_params)
     print(f"Number of Trainable Parameters: {total_params * 1.e-6:.2f} M")
@@ -234,29 +234,39 @@ def get_self_attention_layers(unet):
     return layers
 
 
-def get_specific_attention_projection(name: str, self_attn_layer):
-    if name.lower() == "key":
-        return self_attn_layer.to_k
-    elif name.lower() == "value":
-        return self_attn_layer.to_v
-    elif name.lower() == "query":
-        return self_attn_layer.to_q
+def get_specific_attention_projections(name: str, self_attn_layer) -> List[torch.nn.Module]:
+    out_layers = []
+    if name.lower() == "all":
+        out_layers.append(self_attn_layer.to_k)
+        out_layers.append(self_attn_layer.to_v)
+        out_layers.append(self_attn_layer.to_q)
+        out_layers.append(self_attn_layer.to_out)
+        return out_layers
+    if "key" in name.lower():
+        out_layers.append(self_attn_layer.to_k)
+    if "value" in name.lower():
+        out_layers.append(self_attn_layer.to_v)
+    if "query" in name.lower():
+        out_layers.append(self_attn_layer.to_q)
+    if "out" in name.lower():
+        out_layers.append(self_attn_layer.to_out)
     else:
         raise ValueError(f"Invalid name {name} for attention projection")
 
 
-def set_learnable_params(text_encoder, unet, vae):
+def set_learnable_params(text_encoder, unet, vae, attention_trainable: str):
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(False)
     optim_params = []
 
     self_attn_layers = get_self_attention_layers(unet)
-    keys = [get_specific_attention_projection("key", layer) for layer in self_attn_layers]
+    keys = [get_specific_attention_projections(attention_trainable, layer) for layer in self_attn_layers]
     for k in keys:
-        for n, p in k.named_parameters():
-            p.requires_grad = True
-            optim_params.append(p)
+        for module in k:
+            for n, p in module.named_parameters():
+                p.requires_grad = True
+                optim_params.append(p)
 
     return optim_params
 

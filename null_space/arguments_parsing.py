@@ -7,6 +7,15 @@ import argparse
 def parse_args(input_args=None):
     out_dir = setup_config['OUTPUT_ROOT']
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
+
+    parser.add_argument(
+        "--attention_trainable",
+        type=str,
+        default="key",
+        required=False,
+        choices=['key', 'query', 'value', 'out', 'all'],
+        help="which self attention projection matrices to fine tune",
+    )
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
