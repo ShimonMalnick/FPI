@@ -9,7 +9,7 @@ docker push shimonmal/torch:fpi_12
 2. Then run the docker:
 On the A5000:
 ```shell
-docker run --gpus all -it -v $(pwd):/storage/malnick/ shimonmal/torch:fpi_12
+docker run -e DATASETS_ROOT=/storage/malnick/datasets -e OUTPUT_ROOT=/storage/malnick/results_test --gpus all -it -v $(pwd):/storage/malnick/ shimonmal/torch:fpi_12
 ```
 
 On runai:
