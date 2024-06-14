@@ -2,7 +2,7 @@
 import sys
 sys.path.append(".")
 sys.path.append("..")
-from typing import List
+from typing import List, Tuple
 import math
 import os
 import torch
@@ -40,7 +40,7 @@ def main(args, logger):
 
     inverse_scheduler, noise_scheduler, text_encoder, unet, vae = load_schedulers_and_models(args)
 
-    optim_params = set_learnable_params(text_encoder, unet, vae, args.attention_trainable)
+    optim_params_names, optim_params = set_learnable_params(text_encoder, unet, vae, args.attention_trainable)
 
     total_params = sum(p.numel() for p in optim_params)
     print(f"Number of Trainable Parameters: {total_params * 1.e-6:.2f} M")
@@ -106,10 +106,10 @@ def main(args, logger):
             if save_path is None:
                 save_path = os.path.join(args.output_dir, f"checkpoint-{step}")
             os.makedirs(save_path, exist_ok=True)
+
             state_dict = accelerator.unwrap_model(unet, keep_fp32_wrapper=True).state_dict()
-            state_dict = {k: v for k, v in state_dict.items() if v.requires_grad}
-            # todo: save the relevant weights
-            save_file(state_dict, os.path.join(save_path, "self-attn-null-space.safetensors"))
+            state_dict = {k: v for k, v in state_dict.items() if k in optim_params_names}
+            save_file(state_dict, os.path.join(save_path, f"self-attn-null-space-step-{step}.safetensors"))
 
             print(f"[*] Weights saved at {save_path}")
 
@@ -166,7 +166,7 @@ def main(args, logger):
                 # Predict the noise residual
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                target = batch["intermediate_noise_preds"][:, timestep_idx].squeeze(1)
+                target = batch["intermediate_noise_preds"][list(range(latents.shape[0])), timestep_idx]
 
                 # todo: possibly add a linear combination of the distance to real noise and the new one i add
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -222,60 +222,71 @@ def main(args, logger):
     accelerator.end_training()
 
 
-def find_self_attention_helpers(module, attentions_list: List):
+def find_self_attention_helpers(name, module, attentions_list: List[Tuple[str, torch.nn.Module]]):
     if module.__class__.__name__ == 'BasicTransformerBlock':
         if hasattr(module, "attn1") and module.attn1 is not None:
-            attentions_list.append(module.attn1)
+            attentions_list.append((f"{name}.attn1", module.attn1))
     elif hasattr(module, "children"):
-        for child in module.children():
-            find_self_attention_helpers(child, attentions_list)
+        for child_name, child in module.named_children():
+            find_self_attention_helpers(f"{name}.{child_name}", child, attentions_list)
 
 
 def get_self_attention_layers(unet):
     layers = []
     for name, module in unet.named_children():
         if name in ["up_blocks", "mid_blocks", "down_blocks"]:
-            find_self_attention_helpers(module, layers)
+            find_self_attention_helpers(name, module, layers)
     return layers
 
 
-def get_specific_attention_projections(name: str, self_attn_layer) -> List[torch.nn.Module]:
+def get_specific_attention_projections_with_names(name_of_projection: str, self_attn_layer: Tuple[str, torch.nn.Module]) -> List[Tuple[str, torch.nn.Module]]:
     out_layers = []
-    if name.lower() == "all":
-        out_layers.append(self_attn_layer.to_k)
-        out_layers.append(self_attn_layer.to_v)
-        out_layers.append(self_attn_layer.to_q)
-        out_layers.append(self_attn_layer.to_out)
+    layer_name, layer = self_attn_layer
+    if name_of_projection.lower() == "all":
+        out_layers.append((f"{layer_name}.to_k", layer.to_k))
+        out_layers.append((f"{layer_name}.to_v", layer.to_v))
+        out_layers.append((f"{layer_name}.to_q", layer.to_q))
+        out_layers.append((f"{layer_name}.to_out", layer.to_out))
         return out_layers
-    if "key" in name.lower():
-        out_layers.append(self_attn_layer.to_k)
-    if "value" in name.lower():
-        out_layers.append(self_attn_layer.to_v)
-    if "query" in name.lower():
-        out_layers.append(self_attn_layer.to_q)
-    if "out" in name.lower():
-        out_layers.append(self_attn_layer.to_out)
+    if "key" in name_of_projection.lower():
+        out_layers.append((f"{layer_name}.to_k", layer.to_k))
+    if "value" in name_of_projection.lower():
+        out_layers.append((f"{layer_name}.to_v", layer.to_v))
+    if "query" in name_of_projection.lower():
+        out_layers.append((f"{layer_name}.to_q", layer.to_q))
+    if "out" in name_of_projection.lower():
+        out_layers.append((f"{layer_name}.to_out", layer.to_out))
     if len(out_layers) == 0:
-        raise ValueError(f"Invalid name {name} for attention projection")
+        raise ValueError(f"Invalid name {name_of_projection} for attention projection")
 
     return out_layers
 
 
-def set_learnable_params(text_encoder, unet, vae, attention_trainable: str):
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    unet.requires_grad_(False)
+def get_optimization_params_with_names(unet, attention_trainable: str) -> List[Tuple[str, torch.nn.Parameter]]:
     optim_params = []
 
     self_attn_layers = get_self_attention_layers(unet)
-    keys = [get_specific_attention_projections(attention_trainable, layer) for layer in self_attn_layers]
-    for k in keys:
-        for module in k:
-            for n, p in module.named_parameters():
-                p.requires_grad = True
-                optim_params.append(p)
-
+    names_and_modules = [pair for layer in self_attn_layers for pair in get_specific_attention_projections_with_names(attention_trainable, layer)]
+    for name, module in names_and_modules:
+        for child_name, param in module.named_parameters():
+            optim_params.append((f"{name}.{child_name}", param))
     return optim_params
+
+
+def set_learnable_params(text_encoder, unet, vae, attention_trainable: str):
+    """
+    Set the learnable parameters of the model. The text_encoder, unet and vae are set to not require gradients. The
+    function returns the parameters that are set to require gradients. these are returned as two lists, the first list
+    contains the names of the parameters and the second list contains the parameters themselves.
+    """
+    vae.requires_grad_(False)
+    text_encoder.requires_grad_(False)
+    unet.requires_grad_(False)
+    optim_params = get_optimization_params_with_names(unet, attention_trainable)
+    for n, p in optim_params:
+        p.requires_grad = True
+
+    return [params_tuple[0] for params_tuple in optim_params], [params_tuple[1] for params_tuple in optim_params]
 
 
 if __name__ == "__main__":

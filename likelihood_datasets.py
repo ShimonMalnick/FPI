@@ -40,7 +40,7 @@ class ToyDataset(Dataset):
         self.dataset = in_distribution_dataset
         self.static_data_root = Path(static_data_root)
         if not self.static_data_root.exists():
-            raise ValueError("Static data images root doesn't exists.")
+            raise ValueError(f"Static data images root doesn't exists. got: {static_data_root}")
 
         self.static_images_path = list(Path(static_data_root).iterdir())
         self._length = len(self.dataset)

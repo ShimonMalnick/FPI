@@ -121,13 +121,13 @@ def load_tokenizer(args):
     return tokenizer
 
 
-def load_weights_to_vae(weights_path, vae):
-    vae = vae.cpu()
+def load_weights_to_vae(weights_path, unet):
+    unet = unet.cpu()
     new_weights = load_file(weights_path, device="cpu")
-    state_dict = vae.state_dict()
+    state_dict = unet.state_dict()
     state_dict_without = {k: v for k, v in state_dict.items() if k not in new_weights}
     state_dict_without.update(new_weights)
-    vae.load_state_dict(state_dict)
+    unet.load_state_dict(state_dict)
 
 
 def verify_full_precision(accelerator, unet):
