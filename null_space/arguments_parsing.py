@@ -1,11 +1,11 @@
 import os
-
 from setup import setup_config
 import argparse
 
 
 def parse_args(input_args=None):
     out_dir = setup_config['OUTPUT_ROOT']
+    datasets_root = setup_config['DATASETS_ROOT']
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
 
     parser.add_argument(
@@ -39,7 +39,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--static_data_dir",
         type=str,
-        default="/home/shimon/research/diffusion_inversions/toy_dataset",
+        default=f"{datasets_root}/toy_dataset",
         required=False,
         help="A folder containing the training data of instance images.",
     )
@@ -75,8 +75,9 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default=f"{out_dir}/results_null_space_keys",
-        help="The output directory where the model predictions and checkpoints will be written.",
+        default="results_null_space_keys",
+        help="The output directory where the model predictions and checkpoints will be written. "
+             "(relative to OUTPUT_ROOT)",
     )
     parser.add_argument("--seed", type=int, default=8888, help="A seed for reproducible training.")
     parser.add_argument(
@@ -98,7 +99,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=1, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=8, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
         "--sample_batch_size", type=int, default=1, help="Batch size (per device) for sampling images."
@@ -107,13 +108,13 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--max_train_steps",
         type=int,
-        default=5000,
+        default=50000,
         help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=1000,
+        default=10000,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints can be used both as final"
             " checkpoints in case they are better than the last checkpoint, and are also suitable for resuming"
@@ -273,7 +274,7 @@ def parse_args(input_args=None):
         args.logging_dir = os.path.join(args.output_dir, "logs")
 
     args.run_name = f"{args.attention_trainable}"
-
+    args.output_dir = os.path.join(out_dir, args.output_dir)
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
