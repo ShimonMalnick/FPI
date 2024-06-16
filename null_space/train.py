@@ -1,7 +1,11 @@
 # adapted from https://github.com/mkshing/svdiff-pytorch/blob/main/train_svdiff.py
+import logging
 import sys
+
 sys.path.append(".")
 sys.path.append("..")
+
+from null_space.test import ModelConfig, save_images_from_models
 from typing import List, Tuple
 import math
 import os
@@ -20,7 +24,6 @@ from hf_tools import save_model_card, verify_version, setup_xformers, verify_ful
 from data_tools import log_validation
 
 
-
 def learnable_parameters_key(s):
     """
     Using only the self-attention layers from the UNet. the key 'attn1' is used to find the self-attention layers inside
@@ -33,7 +36,6 @@ def learnable_parameters_key(s):
 
 
 def main(args, logger):
-
     accelerator, repo_id, tokenizer = setup_logging_accelerator_out_dir(args, logger)
 
     save_args_to_yaml(args, f'{args.output_dir}/args.yaml')
@@ -97,8 +99,8 @@ def main(args, logger):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("null-space-pytorch", config=vars(args), init_kwargs={'wandb': {'name': args.run_name}})
-
+        accelerator.init_trackers("sd-likelihood-pytorch", config=vars(args),
+                                  init_kwargs={'wandb': {'name': args.run_name}})
 
     def save_weights(step, save_path=None):
         # Create the pipeline using the trained modules and save it.
@@ -139,37 +141,46 @@ def main(args, logger):
 
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
-                latents = latents * vae.config.scaling_factor
+
+                # first convert the in distribution images
+                latents_in_dist = vae.encode(
+                    batch["in_distribution_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                latents_in_dist = latents_in_dist * vae.config.scaling_factor
+
+                # next convert the out of distribution images
+                latent_out_dist = vae.encode(batch["van_gogh_pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
+                latent_out_dist = latent_out_dist * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
-                noise = torch.randn_like(latents)
-                bsz = latents.shape[0]
+                noise_in_dist = torch.randn_like(latents_in_dist)
+                noise_out_dist = torch.randn_like(latent_out_dist)
+                bsz = latents_in_dist.shape[0]
+                assert bsz == noise_in_dist.shape[0] == noise_out_dist.shape[0], "Batch size mismatch"
 
-                # Set the number of timesteps for the inverse scheduler according to the inversion
-                inversion_num_timesteps = batch['intermediate_noise_preds'].shape[1]
-                inverse_scheduler.set_timesteps(inversion_num_timesteps, device=latents.device)
-                timesteps_inverse = inverse_scheduler.timesteps
-
-                # Sample a random timestep from the inverse ones
-                timestep_idx = torch.randint(0, inversion_num_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps_inverse[timestep_idx]
+                assert latents_in_dist.device == latent_out_dist.device, "Device mismatch"
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,),
+                                          device=latents_in_dist.device)
                 timesteps = timesteps.long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents_in_dist = noise_scheduler.add_noise(latents_in_dist, noise_in_dist, timesteps)
+                noisy_latents_out_dist = noise_scheduler.add_noise(latent_out_dist, noise_out_dist, timesteps)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 # Predict the noise residual
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                model_pred_in_dist = unet(noisy_latents_in_dist, timesteps, encoder_hidden_states).sample
+                model_pred_out_dist = unet(noisy_latents_out_dist, timesteps, encoder_hidden_states).sample
 
-                target = batch["intermediate_noise_preds"][list(range(latents.shape[0])), timestep_idx]
+                loss_in_dist = F.mse_loss(model_pred_in_dist.float(),
+                                          args.in_dist_weight * noise_in_dist + args.out_dist_weight * noise_out_dist,
+                                          reduction="mean")
 
-                # todo: possibly add a linear combination of the distance to real noise and the new one i add
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss_out_dist = F.mse_loss(model_pred_out_dist.float(), noise_out_dist, reduction="mean")
+
+                loss = loss_in_dist + loss_out_dist
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -187,9 +198,6 @@ def main(args, logger):
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
                         save_weights(global_step)
-                        # save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        # accelerator.save_state(save_path)
-                        # logger.info(f"Saved state to {save_path}")
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], }
             progress_bar.set_postfix(**logs)
@@ -239,7 +247,9 @@ def get_self_attention_layers(unet):
     return layers
 
 
-def get_specific_attention_projections_with_names(name_of_projection: str, self_attn_layer: Tuple[str, torch.nn.Module]) -> List[Tuple[str, torch.nn.Module]]:
+def get_specific_attention_projections_with_names(name_of_projection: str,
+                                                  self_attn_layer: Tuple[str, torch.nn.Module]) -> List[
+    Tuple[str, torch.nn.Module]]:
     out_layers = []
     layer_name, layer = self_attn_layer
     if name_of_projection.lower() == "all":
@@ -266,7 +276,8 @@ def get_optimization_params_with_names(unet, attention_trainable: str) -> List[T
     optim_params = []
 
     self_attn_layers = get_self_attention_layers(unet)
-    names_and_modules = [pair for layer in self_attn_layers for pair in get_specific_attention_projections_with_names(attention_trainable, layer)]
+    names_and_modules = [pair for layer in self_attn_layers for pair in
+                         get_specific_attention_projections_with_names(attention_trainable, layer)]
     for name, module in names_and_modules:
         for child_name, param in module.named_parameters():
             optim_params.append((f"{name}.{child_name}", param))
@@ -289,8 +300,25 @@ def set_learnable_params(text_encoder, unet, vae, attention_trainable: str):
     return [params_tuple[0] for params_tuple in optim_params], [params_tuple[1] for params_tuple in optim_params]
 
 
+def set_logger(out_dir):
+    logging.basicConfig(filename=f'{out_dir}/out.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+    logger = get_logger(__name__)
+
+    return logger
+
+
+def generate_images_from_experiment(args):
+    configs = [ModelConfig('base_model')]
+    for idx in range(args.checkpointing_steps, args.max_train_steps + 1, args.checkpointing_steps):
+        cur_path = os.path.join(args.output_dir, f"checkpoint-{idx}",
+                                f"self-attn-null-space-step-{idx}.safetensors")
+        configs.append(ModelConfig(name=f'{idx}-iters', weights_path=cur_path))
+    save_images_from_models(configs, save_path=f"{args.output_dir}/image.png")
+
+
 if __name__ == "__main__":
     verify_version()
-    logger = get_logger(__name__)
     args = parse_args()
+    logger = set_logger(args.output_dir)
     main(args, logger=logger)
+    generate_images_from_experiment(args)

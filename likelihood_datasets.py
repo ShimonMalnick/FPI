@@ -12,7 +12,8 @@ from configs import AugmentationConfig, IdentityConfig
 
 datasets_paths = {"COCO_ROOT": "mscoco17",
                   "CHEST_XRAY_ROOT": "chest_xray",
-                  "IMAGENET_ROOT": "imagenet"}
+                  "IMAGENET_ROOT": "imagenet",
+                  "VAN_GOGH": "vangogh_dataset"}
 
 datasets_paths = {k: os.path.join(setup_config['DATASETS_ROOT'], v) for k, v in datasets_paths.items()}
 
@@ -20,6 +21,45 @@ datasets_paths = {k: os.path.join(setup_config['DATASETS_ROOT'], v) for k, v in 
 def get_default_transform():
     return transforms.Compose(
         [lambda image: Image.open(image).convert('RGB').resize((512, 512)), transforms.ToTensor()])
+
+
+class VanGoghDataset(Dataset):
+    def __init__(self, tokenizer, in_distribution_dataset, root=datasets_paths["VAN_GOGH"], transform=None):
+        self.images_root = root
+        self.images_list = [os.path.join(root, p) for p in os.listdir(self.images_root)]
+        self.dataset = in_distribution_dataset
+        self.len = len(self.dataset)
+        if transform is None:
+            self.transform = get_default_transform()
+        else:
+            self.transform = transform
+        self.tokenizer = tokenizer
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, item):
+        example = {}
+        image, caption = self.dataset[item % len(self.dataset)]
+        example["instance_image"] = image
+        if example["instance_image"].ndim == 4:
+            assert example["instance_image"].shape[0] == 1
+            example["instance_image"] = example["instance_image"][0]
+        example['instance_van_gogh'] = self.transform(self.images_list[item % len(self.images_list)])
+        if example["instance_van_gogh"].ndim == 4:
+            assert example["instance_van_gogh"].shape[0] == 1
+            example["instance_van_gogh"] = example["instance_van_gogh"][0]
+
+        # the used prompt is always empty
+        example["instance_prompt_ids"] = self.tokenizer(
+            "",
+            truncation=True,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids
+
+        return example
 
 
 class ToyDataset(Dataset):

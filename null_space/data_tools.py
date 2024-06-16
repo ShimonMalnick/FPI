@@ -6,22 +6,21 @@ from likelihood_datasets import CocoCaptions17
 
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
-    pixel_values = [example["instance_image"] for example in examples]
-    intermediate_noise_preds = [example["static_intermediate_noise_preds"] for example in examples]
+    input_ids = torch.cat(input_ids, dim=0)
 
+    pixel_values = [example["instance_image"] for example in examples]
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
-    input_ids = torch.cat(input_ids, dim=0)
+    van_gogh_images = torch.stack([example["instance_van_gogh"] for example in examples])
+    van_gogh_images = van_gogh_images.to(memory_format=torch.contiguous_format).float()
 
-    # todo: understand how to select only the relevant intermediate latent - currently i take all and then select
-    # todo: according to the random timestep that we choose
-    intermediate_noise_preds = torch.stack(intermediate_noise_preds, dim=0)
+
 
     batch = {
         "input_ids": input_ids,
-        "pixel_values": pixel_values,
-        "intermediate_noise_preds": intermediate_noise_preds,
+        "in_distribution_pixel_values": pixel_values,
+        "van_gogh_pixel_values": van_gogh_images,
     }
     return batch
 

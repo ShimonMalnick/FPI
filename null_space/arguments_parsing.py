@@ -11,10 +11,26 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--attention_trainable",
         type=str,
-        default="key",
+        default="all",
         required=False,
         choices=['key', 'query', 'value', 'out', 'all'],
         help="which self attention projection matrices to fine tune",
+    )
+    parser.add_argument(
+        "--out_dist_weight",
+        type=float,
+        default=1.0,
+        required=False,
+        help="the weight of the out of distribution term in the loss, i.e. this will determine the balance between the"
+             "out of distribution and in distribution terms in the loss function",
+    )
+    parser.add_argument(
+        "--in_dist_weight",
+        type=float,
+        default=1.0,
+        required=False,
+        help="the weight of the in distribution term in the loss, i.e. this will determine the balance between the"
+             "out of distribution and in distribution terms in the loss function",
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -75,7 +91,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="results_null_space_keys",
+        default="results_sd_likelihood_all",
         help="The output directory where the model predictions and checkpoints will be written. "
              "(relative to OUTPUT_ROOT)",
     )
@@ -99,7 +115,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=8, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
         "--sample_batch_size", type=int, default=1, help="Batch size (per device) for sampling images."
@@ -108,13 +124,13 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--max_train_steps",
         type=int,
-        default=50000,
+        default=100,
         help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=10000,
+        default=10,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints can be used both as final"
             " checkpoints in case they are better than the last checkpoint, and are also suitable for resuming"
@@ -275,6 +291,7 @@ def parse_args(input_args=None):
 
     args.run_name = f"{args.attention_trainable}"
     args.output_dir = os.path.join(out_dir, args.output_dir)
+    os.makedirs(args.output_dir, exist_ok=True)
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank

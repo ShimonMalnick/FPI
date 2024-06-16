@@ -13,7 +13,7 @@ from diffusers import __version__
 import transformers
 import diffusers
 from safetensors.torch import load_file
-from likelihood_datasets import ToyDataset
+from likelihood_datasets import VanGoghDataset
 from null_space.data_tools import get_in_distribution_dataset, collate_fn
 from transformers import CLIPTextModel
 import yaml
@@ -121,13 +121,13 @@ def load_tokenizer(args):
     return tokenizer
 
 
-def load_weights_to_vae(weights_path, unet):
+def load_weights_to_unet(weights_path, unet):
     unet = unet.cpu()
     new_weights = load_file(weights_path, device="cpu")
     state_dict = unet.state_dict()
     state_dict_without = {k: v for k, v in state_dict.items() if k not in new_weights}
     state_dict_without.update(new_weights)
-    unet.load_state_dict(state_dict)
+    unet.load_state_dict(state_dict_without)
 
 
 def verify_full_precision(accelerator, unet):
@@ -200,13 +200,9 @@ def log_initial_info(args, logger, total_batch_size, train_dataloader, train_dat
 
 def get_train_ds_dl(args, tokenizer):
     in_distribution_dataset = get_in_distribution_dataset(args.in_distribution_dataset)
-    # Dataset and DataLoaders creation:
-    train_dataset = ToyDataset(
-        static_data_root=args.static_data_dir,
-        in_distribution_dataset=in_distribution_dataset,
+    train_dataset = VanGoghDataset(
         tokenizer=tokenizer,
-        size=args.resolution,
-    )
+        in_distribution_dataset=in_distribution_dataset)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
